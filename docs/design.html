@@ -1,0 +1,917 @@
+<title>Jotbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+
+<style>
+:root{
+  --paper:#EFF2F3;
+  --surface:#FAFBFC;
+  --sunken:#E5EAEC;
+  --ink:#14202A;
+  --muted:#566973;
+  --faint:#7C8D96;
+  --rule:#D2DADD;
+  --rule-strong:#B6C2C7;
+  --accent:#0E6E70;
+  --accent-ink:#0A5254;
+  --accent-soft:#DBE9E9;
+  --warn:#A05512;
+  --warn-soft:#F2E6D7;
+  --ok:#2C6E49;
+  --ok-soft:#DDEBE2;
+  --shadow:0 1px 2px rgba(20,32,42,.06), 0 8px 24px -16px rgba(20,32,42,.25);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0F1619;
+    --surface:#151E22;
+    --sunken:#1B262B;
+    --ink:#E4EBED;
+    --muted:#94A6AE;
+    --faint:#75878F;
+    --rule:#25333A;
+    --rule-strong:#33454D;
+    --accent:#57C2C0;
+    --accent-ink:#8FD8D6;
+    --accent-soft:#14312F;
+    --warn:#DBA05A;
+    --warn-soft:#33261A;
+    --ok:#77C295;
+    --ok-soft:#172C21;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0F1619;
+  --surface:#151E22;
+  --sunken:#1B262B;
+  --ink:#E4EBED;
+  --muted:#94A6AE;
+  --faint:#75878F;
+  --rule:#25333A;
+  --rule-strong:#33454D;
+  --accent:#57C2C0;
+  --accent-ink:#8FD8D6;
+  --accent-soft:#14312F;
+  --warn:#DBA05A;
+  --warn-soft:#33261A;
+  --ok:#77C295;
+  --ok-soft:#172C21;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+}
+
+*{box-sizing:border-box}
+
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:'IBM Plex Sans','Noto Sans SC',system-ui,-apple-system,'Segoe UI',sans-serif;
+  font-size:16px;
+  line-height:1.75;
+  -webkit-font-smoothing:antialiased;
+}
+
+.wrap{max-width:1140px;margin:0 auto;padding:0 28px 120px}
+.col{max-width:720px}
+
+/* ---------- masthead ---------- */
+.mast{
+  border-bottom:1px solid var(--rule);
+  padding:64px 0 34px;
+  margin-bottom:56px;
+}
+.mast-eyebrow{
+  font-family:'IBM Plex Mono',ui-monospace,monospace;
+  font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--accent);font-weight:500;
+}
+.mast h1{
+  font-size:clamp(2.6rem,6vw,4rem);
+  line-height:1.02;letter-spacing:-.035em;font-weight:700;
+  margin:.28em 0 0;text-wrap:balance;
+}
+.mast h1 .tld{color:var(--faint);font-weight:400}
+.thesis{
+  font-size:1.2rem;line-height:1.6;color:var(--muted);
+  max-width:34em;margin:20px 0 0;text-wrap:pretty;
+}
+.thesis b{color:var(--ink);font-weight:600}
+.meta{
+  display:flex;flex-wrap:wrap;gap:8px 28px;margin-top:30px;
+  font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;
+  color:var(--faint);
+}
+.meta span b{color:var(--muted);font-weight:500}
+
+/* ---------- section scaffolding ---------- */
+section{margin-bottom:76px;scroll-margin-top:24px}
+.sec-head{
+  display:flex;align-items:baseline;gap:14px;
+  border-top:1px solid var(--rule);padding-top:14px;margin-bottom:26px;
+}
+.sec-num{
+  font-family:'IBM Plex Mono',ui-monospace,monospace;
+  font-size:12px;color:var(--accent);font-weight:500;
+  font-variant-numeric:tabular-nums;flex:none;
+}
+h2{font-size:1.6rem;line-height:1.25;letter-spacing:-.02em;font-weight:600;margin:0;text-wrap:balance}
+h3{
+  font-size:1.06rem;font-weight:600;letter-spacing:-.008em;
+  margin:38px 0 12px;
+}
+h4{
+  font-family:'IBM Plex Mono',ui-monospace,monospace;
+  font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--faint);font-weight:500;margin:28px 0 10px;
+}
+p{margin:0 0 16px}
+.col p, .col ul, .col ol{max-width:70ch}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}
+ul,ol{margin:0 0 16px;padding-left:1.25em}
+li{margin-bottom:7px}
+li::marker{color:var(--faint)}
+strong{font-weight:600}
+em{font-style:normal;color:var(--accent);font-weight:500}
+
+code{
+  font-family:'IBM Plex Mono',ui-monospace,monospace;
+  font-size:.86em;background:var(--sunken);
+  padding:.12em .38em;border-radius:3px;
+  border:1px solid var(--rule);
+}
+kbd{
+  font-family:'IBM Plex Mono',ui-monospace,monospace;
+  font-size:.78em;background:var(--surface);color:var(--ink);
+  border:1px solid var(--rule-strong);border-bottom-width:2px;
+  border-radius:4px;padding:.14em .45em;white-space:nowrap;
+}
+
+/* ---------- code blocks ---------- */
+.code{
+  background:var(--surface);border:1px solid var(--rule);border-radius:6px;
+  margin:0 0 20px;overflow:hidden;
+}
+.code-bar{
+  font-family:'IBM Plex Mono',ui-monospace,monospace;
+  font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--faint);background:var(--sunken);
+  padding:7px 14px;border-bottom:1px solid var(--rule);
+  display:flex;justify-content:space-between;gap:16px;
+}
+.code pre{
+  margin:0;padding:15px 16px;overflow-x:auto;
+  font-family:'IBM Plex Mono',ui-monospace,monospace;
+  font-size:12.6px;line-height:1.7;color:var(--ink);
+}
+.code pre .c{color:var(--faint)}
+.code pre .k{color:var(--accent)}
+.code pre .s{color:var(--ok)}
+
+/* ---------- tables ---------- */
+.tbl{overflow-x:auto;margin:0 0 22px;border:1px solid var(--rule);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:14px}
+th{
+  font-family:'IBM Plex Mono',ui-monospace,monospace;
+  font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--faint);font-weight:500;text-align:left;
+  padding:11px 14px;background:var(--sunken);
+  border-bottom:1px solid var(--rule);white-space:nowrap;
+}
+td{padding:12px 14px;border-bottom:1px solid var(--rule);vertical-align:top;line-height:1.6}
+tr:last-child td{border-bottom:none}
+td code{font-size:.84em}
+
+/* ---------- chips ---------- */
+.chip{
+  display:inline-block;font-family:'IBM Plex Mono',ui-monospace,monospace;
+  font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:500;
+  padding:2px 7px;border-radius:3px;white-space:nowrap;
+  border:1px solid transparent;
+}
+.chip.hi{background:var(--warn-soft);color:var(--warn);border-color:var(--warn)}
+.chip.md{background:var(--accent-soft);color:var(--accent-ink);border-color:var(--accent)}
+.chip.lo{background:var(--ok-soft);color:var(--ok);border-color:var(--ok)}
+.chip.no{background:var(--sunken);color:var(--faint);border-color:var(--rule-strong)}
+
+/* ---------- decision records ---------- */
+.decisions{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:16px}
+.dr{
+  background:var(--surface);border:1px solid var(--rule);border-radius:6px;
+  padding:16px 18px 18px;box-shadow:var(--shadow);
+  display:flex;flex-direction:column;gap:9px;
+}
+.dr-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.dr-id{
+  font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11.5px;
+  font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums;
+}
+.dr h5{font-size:.98rem;font-weight:600;margin:0;line-height:1.4;letter-spacing:-.006em}
+.dr dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;font-size:13.6px;line-height:1.62}
+.dr dt{
+  font-family:'IBM Plex Mono',ui-monospace,monospace;
+  font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--faint);padding-top:4px;white-space:nowrap;
+}
+.dr dd{margin:0;color:var(--muted)}
+.dr dd.now{color:var(--ink)}
+
+/* ---------- figures ---------- */
+figure{margin:0 0 26px}
+.fig-frame{
+  background:var(--surface);border:1px solid var(--rule);border-radius:6px;
+  padding:22px 18px;overflow-x:auto;
+}
+.fig-frame svg{display:block;width:100%;min-width:600px;height:auto}
+figcaption{
+  font-family:'IBM Plex Mono',ui-monospace,monospace;
+  font-size:11.5px;color:var(--faint);margin-top:9px;letter-spacing:.02em;
+}
+
+/* ---------- callout ---------- */
+.note{
+  border-left:2px solid var(--accent);background:var(--accent-soft);
+  padding:14px 18px;border-radius:0 5px 5px 0;margin:0 0 22px;
+}
+.note.warn{border-left-color:var(--warn);background:var(--warn-soft)}
+.note p:last-child{margin-bottom:0}
+.note-label{
+  font-family:'IBM Plex Mono',ui-monospace,monospace;
+  font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--accent-ink);font-weight:500;display:block;margin-bottom:5px;
+}
+.note.warn .note-label{color:var(--warn)}
+
+/* ---------- milestone track ---------- */
+.track{display:flex;flex-direction:column;gap:0;border:1px solid var(--rule);border-radius:6px;overflow:hidden;background:var(--surface)}
+.ms{
+  display:grid;grid-template-columns:64px 1fr 132px;gap:18px;
+  padding:17px 18px;border-bottom:1px solid var(--rule);align-items:start;
+}
+.ms:last-child{border-bottom:none}
+.ms-id{
+  font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px;font-weight:600;
+  color:var(--accent);font-variant-numeric:tabular-nums;padding-top:1px;
+}
+.ms-body h5{margin:0 0 5px;font-size:.98rem;font-weight:600}
+.ms-body p{margin:0;font-size:13.8px;color:var(--muted);line-height:1.62}
+.ms-cost{
+  font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;
+  color:var(--muted);text-align:right;padding-top:2px;
+}
+.ms.key{background:var(--accent-soft)}
+.ms.key .ms-body p{color:var(--accent-ink)}
+
+/* ---------- open questions ---------- */
+.oq{border-top:1px solid var(--rule);padding:15px 0 3px;display:grid;grid-template-columns:44px 1fr;gap:16px}
+.oq-id{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:var(--warn);font-weight:600}
+.oq p{margin:0 0 7px}
+.oq .rec{font-size:13.8px;color:var(--muted)}
+.oq .rec b{color:var(--ok);font-weight:600}
+
+@media (max-width:720px){
+  .wrap{padding:0 18px 80px}
+  .mast{padding-top:44px}
+  .ms{grid-template-columns:48px 1fr;gap:12px}
+  .ms-cost{grid-column:2;text-align:left;padding-top:6px}
+  .dr dl{grid-template-columns:1fr;gap:2px 0}
+  .dr dt{padding-top:8px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <div class="mast-eyebrow">架构设计 · M0 已落地</div>
+  <h1>Jotbook<span class="tld"> / jot</span></h1>
+  <p class="thesis">一个存你自己命令的笔记本。<b>它解决的是检索问题，不是生成问题</b> —— 命令你早就知道、早就跑通过，你只是不想再翻一遍聊天记录。</p>
+  <div class="meta">
+    <span><b>版本</b> 0.1.0</span>
+    <span><b>日期</b> 2026-08-19</span>
+    <span><b>栈</b> Rust 1.97 · MSVC</span>
+    <span><b>后端</b> 无</span>
+    <span><b>内置</b> 13 本 · 460 条</span>
+    <span><b>冷启动</b> 38ms</span>
+  </div>
+</header>
+
+<!-- ══════════════ 1 ══════════════ -->
+<section id="s1">
+  <div class="sec-head"><span class="sec-num">01</span><h2>定位与边界</h2></div>
+  <div class="col">
+    <p>Jotbook 把一条命令拆成三样东西：<em>文本模板</em>、<em>变量</em>、<em>注入通道</em>。它把最终文本打进你正在用的那个输入框，然后就退场 —— 回车永远由你按。</p>
+    <p>命令行是旗舰场景，但数据模型里不出现 “shell” 这个概念，所以 SQL、<code>kubectl</code>、<code>curl</code>、正则、连接串全部免费适用。</p>
+
+    <h4>做这些</h4>
+    <ul>
+      <li>本地 Markdown 笔记本，可 <code>git</code> 同步，不装 Jotbook 也能读</li>
+      <li>三层变量：每次问的、Profile 常量、命令动态生成的</li>
+      <li>把结果注入当前 shell 缓冲区 / 任意焦点窗口 / 剪贴板，用户可选</li>
+      <li>社区笔记本靠 GitHub 仓库分发，零账号零服务器</li>
+      <li>CLI 与 GUI 同源，各自独立可用</li>
+    </ul>
+
+    <h4>明确不做</h4>
+    <ul>
+      <li><b>不做终端模拟器。</b>不接管 PTY，不自己跑命令 —— 那是 Warp 和 Atuin Desktop 的赛道，工作量差一个数量级</li>
+      <li><b>不做执行引擎</b>：无编排、无步骤依赖、无重试</li>
+      <li><b>不做账号 / 云同步 / 团队空间</b> —— 用 git</li>
+      <li><b>不做 AI 生成命令</b> —— 你已经有 Claude Code 了；Jotbook 存的是<em>已经验证过</em>的那条</li>
+      <li><b>不做密钥管理</b>：明确拒收 secrets，只支持引用 <code>{{@env.X}}</code></li>
+      <li><b>不把 cmd.exe 当一等公民</b>：它没有任何行编辑 hook，只保证键盘模拟能用</li>
+    </ul>
+    <div class="note">
+      <span class="note-label">为什么这一节最重要</span>
+      <p>这是个单人项目。上面「不做」的六条，每一条都是别人一定会来提的 issue。第一天就写进 README，之后照着它无情地关。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 2 ══════════════ -->
+<section id="s2">
+  <div class="sec-head"><span class="sec-num">02</span><h2>系统分层</h2></div>
+
+  <figure>
+    <div class="fig-frame">
+      <svg viewBox="0 0 900 430" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Jotbook 分层架构图：GUI 与 CLI 共享 jot-core，core 之下是注入层与纯文本存储">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--rule-strong)"/>
+          </marker>
+        </defs>
+        <g font-family="'IBM Plex Mono',monospace" font-size="12.5">
+
+          <!-- row 1 -->
+          <rect x="60" y="18" width="340" height="76" rx="6" fill="var(--sunken)" stroke="var(--rule-strong)"/>
+          <text x="78" y="44" fill="var(--ink)" font-size="14" font-weight="600">GUI · Tauri v2</text>
+          <text x="78" y="65" fill="var(--muted)">托盘常驻 · 全局热键 · Palette</text>
+          <text x="78" y="82" fill="var(--muted)">笔记本编辑器 · Profile 管理</text>
+
+          <rect x="500" y="18" width="340" height="76" rx="6" fill="var(--sunken)" stroke="var(--rule-strong)"/>
+          <text x="518" y="44" fill="var(--ink)" font-size="14" font-weight="600">CLI · jot</text>
+          <text x="518" y="65" fill="var(--muted)">单文件二进制 · 冷启动预算 50ms</text>
+          <text x="518" y="82" fill="var(--muted)">内建 TUI · shell widget 后端</text>
+
+          <path d="M230 94 L230 128 L450 128 L450 152" fill="none" stroke="var(--rule-strong)" stroke-width="1.5" marker-end="url(#ar)"/>
+          <path d="M670 94 L670 128 L450 128" fill="none" stroke="var(--rule-strong)" stroke-width="1.5"/>
+
+          <!-- core -->
+          <rect x="60" y="154" width="780" height="74" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+          <text x="78" y="180" fill="var(--accent-ink)" font-size="14" font-weight="600">jot-core</text>
+          <text x="78" y="203" fill="var(--accent-ink)">parse · index · resolve · profile · registry · capture</text>
+          <text x="78" y="220" fill="var(--accent-ink)" opacity=".75">纯逻辑，无 IO 副作用，两个前端唯一的共享真相</text>
+
+          <path d="M280 228 L280 262" fill="none" stroke="var(--rule-strong)" stroke-width="1.5" marker-end="url(#ar)"/>
+          <path d="M640 228 L640 262" fill="none" stroke="var(--rule-strong)" stroke-width="1.5" marker-end="url(#ar)"/>
+
+          <!-- row 3 left: inject -->
+          <rect x="60" y="266" width="420" height="86" rx="6" fill="var(--surface)" stroke="var(--rule-strong)"/>
+          <text x="78" y="291" fill="var(--ink)" font-size="14" font-weight="600">jot-inject</text>
+          <text x="78" y="313" fill="var(--muted)">Buffer · Keystroke · Clipboard</text>
+          <text x="78" y="331" fill="var(--muted)" opacity=".8">平台差异全部关在这一个 crate 里</text>
+
+          <!-- row 3 right: storage -->
+          <rect x="500" y="266" width="340" height="86" rx="6" fill="var(--surface)" stroke="var(--rule-strong)" stroke-dasharray="4 3"/>
+          <text x="518" y="291" fill="var(--ink)" font-size="14" font-weight="600">~/.jot/</text>
+          <text x="518" y="313" fill="var(--muted)">notebooks/**.md　← git 同步</text>
+          <text x="518" y="331" fill="var(--muted)">config.toml · profiles.toml　← 本地</text>
+
+          <!-- bottom band -->
+          <rect x="60" y="374" width="420" height="42" rx="6" fill="var(--sunken)" stroke="var(--rule)"/>
+          <text x="78" y="400" fill="var(--muted)">→ 你的 shell / DBeaver / 任意输入框</text>
+
+          <text x="500" y="392" fill="var(--faint)" font-size="11.5">文件是唯一真相 —— GUI 只是其中一个编辑器</text>
+          <text x="500" y="409" fill="var(--faint)" font-size="11.5">（见 D-07）</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>图 1 —— 分层。GUI 与 CLI 进程完全解耦，只共享 core 与磁盘上的文件。</figcaption>
+  </figure>
+
+  <div class="col">
+    <p>两个前端<b>不通过 IPC 互相依赖</b>。理由很硬：shell widget 模式下 CLI 是每次按键被重新拉起一次的，必须能在没有 GUI 的机器上独立工作，也必须冷启动够快（见 <em>D-10</em>）。它们唯一的耦合点是磁盘上那批 <code>.md</code> 文件。</p>
+  </div>
+
+  <h4>仓库结构</h4>
+  <div class="code">
+    <div class="code-bar"><span>jotbook/ · cargo workspace</span><span>MIT</span></div>
+<pre>crates/
+  jot-core/      <span class="c"># 解析 / 索引 / 变量求值 / profile / registry</span>
+  jot-inject/    <span class="c"># trait Injector + 三平台实现，唯一的 unsafe 聚集地</span>
+  jot-cli/       <span class="c"># bin `jot`：TUI 选择器 + widget 后端 + 子命令</span>
+  jot-gui/       <span class="c"># Tauri src-tauri</span>
+gui/             <span class="c"># 前端 (Svelte)</span>
+shell/           <span class="c"># jot.psm1 / jot.bash / jot.zsh / jot.fish</span>
+notebooks/       <span class="c"># 内置起步笔记本，随二进制发布</span>
+
+<span class="c"># 独立仓库 —— 贡献门槛完全不同，见 D-08</span>
+jotbook/notebooks   <span class="c"># 社区笔记本，纯 .md，PR 几乎无脑合</span></pre>
+  </div>
+</section>
+
+<!-- ══════════════ 3 ══════════════ -->
+<section id="s3">
+  <div class="sec-head"><span class="sec-num">03</span><h2>数据格式</h2></div>
+  <div class="col">
+    <p>一个笔记本 = 一个 <code>.md</code> 文件。YAML frontmatter 声明变量，<code>##</code> 标题是条目名，标题下的正文是说明，代码块是命令本身。在 GitHub 上直接可读，用 VSCode / vim 编辑毫无障碍。</p>
+  </div>
+
+  <div class="code">
+    <div class="code-bar"><span>~/.jot/notebooks/local/my-servers.md</span><span>spec_version 1</span></div>
+<pre><span class="c">---</span>
+<span class="k">name</span>: my-servers
+<span class="k">description</span>: 我的服务器与服务
+<span class="k">tags</span>: [ops, deploy]
+<span class="k">vars</span>:
+  service:
+    desc: systemd 服务名
+    from: profile              <span class="c"># ← 从当前 Profile 取，见 §3.2</span>
+  host:
+    desc: 目标主机
+    from: shell                <span class="c"># ← 动态候选列表</span>
+    cmd: grep '^Host ' ~/.ssh/config | awk '{print $2}'
+  since:
+    desc: 日志起始时间
+    from: ask
+    options: ["10 min ago", "1 hour ago", "today"]
+<span class="c">---</span>
+
+<span class="k">## 重启后端服务</span>
+
+改完 appsettings 之后必须重启，改 nginx 不用。
+
+<span class="c">```sh @platform=linux @confirm @tags=deploy</span>
+sudo systemctl restart {{service}}
+<span class="c">```</span>
+
+<span class="k">## 跟踪服务日志</span>
+
+<span class="c">```sh @platform=linux @remote</span>
+journalctl -u {{service}} --since "{{since}}" -f
+<span class="c">```</span>
+
+<span class="k">## 登上生产机</span>
+
+<span class="c">```sh</span>
+ssh {{host}}
+<span class="c">```</span></pre>
+  </div>
+
+  <div class="col">
+    <h3>3.1　代码块属性</h3>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>属性</th><th>作用</th><th>缺省</th></tr></thead>
+      <tbody>
+        <tr><td><code>@platform=</code></td><td><code>windows</code> / <code>linux</code> / <code>macos</code>，多值逗号分隔；非当前平台的条目从搜索结果里隐藏</td><td><code>any</code></td></tr>
+        <tr><td><code>@confirm</code></td><td>危险命令。注入前多一步确认弹窗，且在列表里带警示色</td><td>关</td></tr>
+        <tr><td><code>@remote</code></td><td>标记「预期在 SSH 之后使用」。<b>会禁用该条目的 <code>from: shell</code> 变量</b>，因为动态候选会在本地求值 —— 这是个隐蔽的正确性陷阱</td><td>关</td></tr>
+        <tr><td><code>@id=</code></td><td>稳定标识，用于 <code>jot run &lt;id&gt;</code> 和跨笔记本引用</td><td>标题 slug</td></tr>
+        <tr><td><code>@lang</code>（即围栏语言）</td><td><code>sh</code>/<code>ps1</code> 走 shell 通道；<code>sql</code> 等直接走键盘模拟或剪贴板；同时决定高亮</td><td><code>sh</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <h3>3.2　变量的三层</h3>
+    <p>语法统一是 <code>{{name}}</code>，行内默认值写 <code>{{name=默认}}</code>，字面量大括号转义为 <code>\{{</code>。</p>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>来源</th><th>行为</th><th>典型用途</th></tr></thead>
+      <tbody>
+        <tr><td><code>ask</code></td><td>执行时提问，可带静态候选</td><td>分支名、时间窗口</td></tr>
+        <tr><td><code>profile</code></td><td>从当前 Profile 直接取值，<b>不打断流程</b></td><td><code>kestrel-orders-api.service</code></td></tr>
+        <tr><td><code>shell</code></td><td>跑一条命令生成候选列表，模糊搜索里选</td><td>systemd 服务、docker 容器、k8s pod</td></tr>
+        <tr><td><code>@内置</code></td><td><code>{{@cwd}}</code> <code>{{@clipboard}}</code> <code>{{@git.branch}}</code> <code>{{@date}}</code> <code>{{@env.X}}</code></td><td>上下文填充</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="code">
+    <div class="code-bar"><span>~/.jot/profiles.toml</span><span>本地，永不进 git</span></div>
+<pre><span class="k">[prod]</span>
+service = <span class="s">"kestrel-orders-api.service"</span>
+host    = <span class="s">"prod-01"</span>
+db      = <span class="s">"orders"</span>
+
+<span class="k">[dev]</span>
+service = <span class="s">"kestrel-orders-api.service"</span>
+host    = <span class="s">"dev-01"</span>
+db      = <span class="s">"orders_dev"</span>
+
+<span class="c"># jot use prod   → 全局切换</span>
+<span class="c"># 生产 Profile 建议置顶显示为警示色，避免手滑</span></pre>
+  </div>
+
+  <div class="note warn">
+    <span class="note-label">格式一旦有用户就改不动了</span>
+    <p>所以 <em>M0 阶段只给自己用</em>，格式先跑满一个月再公开。frontmatter 里从第一版就写 <code>spec_version</code>，给未来的迁移留门。</p>
+  </div>
+</section>
+
+<!-- ══════════════ 4 ══════════════ -->
+<section id="s4">
+  <div class="sec-head"><span class="sec-num">04</span><h2>注入层</h2></div>
+  <div class="col">
+    <p>这是整个项目<b>唯一真正难的部分</b>，也是全部平台差异的所在地。设计的起点是你提的那个需求 —— <em>能跑 <code>ssh xxx</code> 然后接着用</em>。这一句话决定了架构。</p>
+    <p>如果自己 spawn 子进程执行命令，就必须实现 PTY、ANSI 解析、滚动缓冲、窗口尺寸协商 —— 那是在造终端。而<b>注入模型天然绕开它</b>：把 <code>ssh prod-01</code> 打进你自己的终端，你按回车，之后的一切与 Jotbook 无关。</p>
+    <p>但代价藏在下一步：进去以后，本地 shell 已经不读输入了，widget 通道当场失效。</p>
+  </div>
+
+  <figure>
+    <div class="fig-frame">
+      <svg viewBox="0 0 900 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="注入通道与 SSH 边界示意：Buffer 通道止步于 SSH 边界，Keystroke 与 Clipboard 可以穿透">
+        <g font-family="'IBM Plex Mono',monospace" font-size="12.5">
+          <rect x="24" y="112" width="146" height="92" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+          <text x="52" y="150" fill="var(--accent-ink)" font-size="15" font-weight="600">jot</text>
+          <text x="40" y="172" fill="var(--accent-ink)" font-size="11.5">已解析出最终文本</text>
+
+          <!-- boundary -->
+          <line x1="560" y1="16" x2="560" y2="300" stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="6 4"/>
+          <text x="572" y="30" fill="var(--warn)" font-size="11.5" font-weight="600">ssh / docker exec / psql / vim 边界</text>
+
+          <!-- lane A -->
+          <text x="196" y="52" fill="var(--faint)" font-size="10.5" letter-spacing="1">A · BUFFER</text>
+          <line x1="196" y1="72" x2="540" y2="72" stroke="var(--rule-strong)" stroke-width="1.5" marker-end="url(#ar)"/>
+          <rect x="300" y="58" width="150" height="28" rx="4" fill="var(--surface)" stroke="var(--rule-strong)"/>
+          <text x="313" y="77" fill="var(--ink)" font-size="11.5">PSReadLine / zle</text>
+          <text x="572" y="77" fill="var(--warn)" font-size="12">✕ 失效</text>
+
+          <!-- lane B -->
+          <text x="196" y="140" fill="var(--faint)" font-size="10.5" letter-spacing="1">B · KEYSTROKE</text>
+          <line x1="196" y1="160" x2="836" y2="160" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#ar)"/>
+          <rect x="300" y="146" width="176" height="28" rx="4" fill="var(--accent-soft)" stroke="var(--accent)"/>
+          <text x="313" y="165" fill="var(--accent-ink)" font-size="11.5">SendInput / XTEST</text>
+          <text x="600" y="152" fill="var(--ok)" font-size="12">✓ 穿透</text>
+
+          <!-- lane C -->
+          <text x="196" y="230" fill="var(--faint)" font-size="10.5" letter-spacing="1">C · CLIPBOARD</text>
+          <line x1="196" y1="250" x2="836" y2="250" stroke="var(--rule-strong)" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+          <rect x="300" y="236" width="150" height="28" rx="4" fill="var(--surface)" stroke="var(--rule-strong)"/>
+          <text x="313" y="255" fill="var(--ink)" font-size="11.5">复制，你自己粘</text>
+          <text x="600" y="242" fill="var(--ok)" font-size="12">✓ 永远可用</text>
+
+          <text x="196" y="292" fill="var(--faint)" font-size="11.5">回车永远不发 —— 三个通道都一样（D-04）</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>图 2 —— SSH 边界。B 通道不是备选项，它是唯一能穿透边界的通道，因此是必需项。</figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>4.1　通道能力矩阵</h3>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>通道</th><th>机制</th><th>精度</th><th>穿透 SSH</th><th>失败模式</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>A · Buffer</b></td>
+          <td>CLI 打到 stdout，shell widget 写回行缓冲</td>
+          <td><span class="chip lo">精确</span></td>
+          <td><span class="chip no">否</span></td>
+          <td>几乎不会失败</td>
+        </tr>
+        <tr>
+          <td><b>B · Keystroke</b></td>
+          <td>Win <code>SendInput</code> · mac <code>CGEventPost</code> · X11 <code>XTEST</code></td>
+          <td><span class="chip md">较高</span></td>
+          <td><span class="chip lo">是</span></td>
+          <td>焦点竞态、IME、Wayland、EDR 拦截</td>
+        </tr>
+        <tr>
+          <td><b>C · Clipboard</b></td>
+          <td><code>arboard</code> 写剪贴板 + 提示</td>
+          <td><span class="chip md">较高</span></td>
+          <td><span class="chip lo">是</span></td>
+          <td>覆盖用户剪贴板（可选恢复）</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <h4>降级链</h4>
+    <ol>
+      <li>环境变量 <code>JOT_WIDGET=1</code> → <b>A</b>（说明是 shell 自己拉起的）</li>
+      <li>否则键盘模拟可用且焦点窗口不是 Jotbook 自己 → <b>B</b></li>
+      <li>否则 → <b>C</b>，并明确告诉用户「已复制，按 <kbd>Ctrl</kbd>+<kbd>V</kbd>」</li>
+    </ol>
+    <p>用户可以在设置里把默认通道钉死，也可以在 Palette 里用 <kbd>Tab</kbd> 临时切换 —— 你原话「用户自己选择」就是这一条。</p>
+
+    <h4>实现时会踩的三个坑</h4>
+    <ul>
+      <li><b>多行必须用 bracketed paste</b>（<code>\e[200~ … \e[201~</code>）包住，否则中间的换行被终端当成执行 —— 这是 B 通道最容易出的安全事故。</li>
+      <li><b>Wayland 设计上禁止全局合成输入。</b><code>ydotool</code> 要 uinput 权限，<code>wtype</code> 只支持 wlroots。espanso 至今没解决，你也不会。提前写进 README，直接降级到 C。</li>
+      <li><b>Windows 上先试 <code>WriteConsoleInput</code></b>（配合 <code>AttachConsole</code>）再退回 <code>SendInput</code>：前者是直接写目标控制台的输入缓冲，比合成键盘事件可靠得多，也不容易被 EDR 盯上。这条值得花半天验证。</li>
+    </ul>
+
+    <h3>4.2　Widget 协议</h3>
+    <p>沿用 fzf 那套约定：<b>TUI 画到 stderr/tty，结果打到 stdout</b>，退出码 0 = 替换缓冲区，非 0 = 用户取消，缓冲区原样不动。这样 widget 脚本可以极短，也不需要任何 IPC。</p>
+  </div>
+
+  <div class="code">
+    <div class="code-bar"><span>shell/jot.psm1 · PowerShell</span><span>PSReadLine</span></div>
+<pre>Set-PSReadLineKeyHandler -Chord <span class="s">'Ctrl+g'</span> -ScriptBlock {
+    $line = $null; $cursor = $null
+    [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+    $env:JOT_WIDGET = <span class="s">'1'</span>
+    $out = jot pick --widget --line <span class="s">"$line"</span>
+    <span class="k">if</span> ($LASTEXITCODE -eq 0 -and $out) {
+        [Microsoft.PowerShell.PSConsoleReadLine]::RevertLine()
+        [Microsoft.PowerShell.PSConsoleReadLine]::Insert($out)
+    }
+}</pre>
+  </div>
+
+  <div class="code">
+    <div class="code-bar"><span>shell/jot.bash · shell/jot.zsh</span><span>readline / zle</span></div>
+<pre><span class="c"># bash</span>
+__jot_widget() {
+  <span class="k">local</span> out; out=$(JOT_WIDGET=1 jot pick --widget --line <span class="s">"$READLINE_LINE"</span>) || <span class="k">return</span>
+  READLINE_LINE=<span class="s">"$out"</span>; READLINE_POINT=${#out}
+}
+bind -x <span class="s">'"\C-g": __jot_widget'</span>
+
+<span class="c"># zsh</span>
+__jot_widget() {
+  <span class="k">local</span> out; out=$(JOT_WIDGET=1 jot pick --widget --line <span class="s">"$BUFFER"</span>) || <span class="k">return</span>
+  BUFFER=<span class="s">"$out"</span>; CURSOR=${#BUFFER}; zle redisplay
+}
+zle -N __jot_widget; bindkey <span class="s">'^G'</span> __jot_widget</pre>
+  </div>
+
+  <div class="col">
+    <p>安装走 zoxide / starship 那套一行引导：<code>jot init powershell | iex</code>、<code>eval "$(jot init bash)"</code>。所有 widget 脚本由二进制自己吐出来，用户 profile 里永远只有那一行，升级不用改配置。</p>
+  </div>
+</section>
+
+<!-- ══════════════ 5 ══════════════ -->
+<section id="s5">
+  <div class="sec-head"><span class="sec-num">05</span><h2>关键决策</h2></div>
+  <div class="col">
+    <p>每条都记了代价 —— 这些是以后想反悔时要付的账。</p>
+  </div>
+
+  <div class="decisions">
+
+    <div class="dr">
+      <div class="dr-top"><span class="dr-id">D-01</span><span class="chip md">格式</span></div>
+      <h5>Markdown + YAML frontmatter</h5>
+      <dl>
+        <dt>理由</dt><dd class="now">它本身就是「笔记本」—— 命令旁边能写为什么、写坑。GitHub 上直接可读可 diff，社区 PR 门槛几乎为零。Atuin Desktop 用纯 YAML，用户当场抱怨太啰嗦，官方已在计划换成 markdown-like。</dd>
+        <dt>代价</dt><dd>解析比 TOML 复杂；要防用户把它当自由文档写坏结构。</dd>
+      </dl>
+    </div>
+
+    <div class="dr">
+      <div class="dr-top"><span class="dr-id">D-02</span><span class="chip md">格式</span></div>
+      <h5>变量写 <code>{{x}}</code>，不用 <code>&lt;x&gt;</code></h5>
+      <dl>
+        <dt>理由</dt><dd class="now">navi 用尖括号，但 <code>&lt;</code> <code>&gt;</code> 是 shell 重定向符，命令文本天然歧义，也破坏语法高亮。</dd>
+        <dt>代价</dt><dd>从 navi 迁移需要一个转换脚本。</dd>
+      </dl>
+    </div>
+
+    <div class="dr">
+      <div class="dr-top"><span class="dr-id">D-03</span><span class="chip md">格式</span></div>
+      <h5>变量分 ask / profile / shell 三层</h5>
+      <dl>
+        <dt>理由</dt><dd class="now">这三层解决三个不同问题：临时输入、<b>我自己的环境常量</b>、机器上的实时状态。少任何一层都得手填。</dd>
+        <dt>代价</dt><dd>三层的求值顺序和覆盖规则要想清楚并写进 spec。</dd>
+      </dl>
+    </div>
+
+    <div class="dr">
+      <div class="dr-top"><span class="dr-id">D-04</span><span class="chip hi">安全</span></div>
+      <h5>只注入，永不执行；回车永远由人按</h5>
+      <dl>
+        <dt>理由</dt><dd class="now"><b>安全模型即产品模型。</b>一个会跑 <code>sudo systemctl</code> 的工具，「我从不执行任何东西，我只是把字打出来」可以直接写进 README 第一屏。Warp 和 Atuin 都是执行模型，这是你唯一且免费的差异化。</dd>
+        <dt>代价</dt><dd>放弃「一键批量执行」这类需求，永久性地。</dd>
+      </dl>
+    </div>
+
+    <div class="dr">
+      <div class="dr-top"><span class="dr-id">D-05</span><span class="chip hi">注入</span></div>
+      <h5>三通道并存，键盘模拟是必需项</h5>
+      <dl>
+        <dt>理由</dt><dd class="now">SSH 边界之后 widget 通道必然失效（图 2）。要满足「ssh 完接着用」，B 通道没有替代品。</dd>
+        <dt>代价</dt><dd>吃下 Wayland、macOS 授权、EDR 误报这三笔长期维护债。</dd>
+      </dl>
+    </div>
+
+    <div class="dr">
+      <div class="dr-top"><span class="dr-id">D-06</span><span class="chip md">依赖</span></div>
+      <h5>自带模糊匹配与 TUI，不依赖 fzf</h5>
+      <dl>
+        <dt>理由</dt><dd class="now"><code>nucleo</code> + <code>ratatui</code>。navi / pet / cheat 全都要外部 fzf，这正是它们在 Windows 上体验垮掉的原因。<b>Windows 一等公民是你最实在的空位。</b></dd>
+        <dt>代价</dt><dd>要自己实现选择器交互，多两三天。</dd>
+      </dl>
+    </div>
+
+    <div class="dr">
+      <div class="dr-top"><span class="dr-id">D-07</span><span class="chip md">架构</span></div>
+      <h5>文件是唯一真相，GUI 只是编辑器之一</h5>
+      <dl>
+        <dt>理由</dt><dd class="now">无数据库、无导入导出、无锁定。用 <code>notify</code> 监听文件热重载，用户拿 vim 改照样生效，git 冲突用户自己 merge。</dd>
+        <dt>代价</dt><dd>没有事务，外部改坏文件要能优雅报错而不是崩。</dd>
+      </dl>
+    </div>
+
+    <div class="dr">
+      <div class="dr-top"><span class="dr-id">D-08</span><span class="chip md">分发</span></div>
+      <h5>零后端：GitHub tarball + index.json</h5>
+      <dl>
+        <dt>理由</dt><dd class="now">CI 生成索引发到 Pages，客户端从 <code>codeload.github.com</code> 拉 tarball，不需要 git 也不需要鉴权。零服务器、零账号、零合规负担。tldr 靠同样的模式攒到了几千贡献者。</dd>
+        <dt>代价</dt><dd>没有使用数据。<em>这对你是好事</em>。</dd>
+      </dl>
+    </div>
+
+    <div class="dr">
+      <div class="dr-top"><span class="dr-id">D-09</span><span class="chip hi">安全</span></div>
+      <h5>社区源默认禁用 <code>from: shell</code></h5>
+      <dl>
+        <dt>理由</dt><dd class="now">动态变量源 = 任意代码执行，只要预览一下就中招 —— 这是整个品类的漏洞，navi 也有。分级：<code>none</code>（禁用）/ <code>prompt</code>（首次弹完整命令确认，按内容 hash 记忆）/ <code>full</code>（仅本地笔记本）。</dd>
+        <dt>代价</dt><dd>社区笔记本体验略打折，值得。</dd>
+      </dl>
+    </div>
+
+    <div class="dr">
+      <div class="dr-top"><span class="dr-id">D-10</span><span class="chip hi">性能</span></div>
+      <h5>CLI 冷启动预算 50ms，硬指标</h5>
+      <dl>
+        <dt>理由</dt><dd class="now">widget 路径每次按键都重启进程，慢一点整个体验就废了。落地：<code>~/.jot/index.bin</code> 按 mtime 增量失效；<b>widget 路径上零网络 IO</b>（<code>jot sync</code> 只能手动触发）。</dd>
+        <dt>代价</dt><dd>CLI 永远不能用 Node/Python 写，也不能塞进 GUI 进程。</dd>
+      </dl>
+    </div>
+
+    <div class="dr">
+      <div class="dr-top"><span class="dr-id">D-11</span><span class="chip md">栈</span></div>
+      <h5>Rust + Tauri v2 + Svelte</h5>
+      <dl>
+        <dt>理由</dt><dd class="now">CLI 要单文件无运行时依赖，GUI 要能复用同一个 core —— 这个组合是唯一解。navi / espanso / atuin 全是 Rust，注入层的坑可以直接抄。Tauri 产物 ~8MB，Electron ~100MB。</dd>
+        <dt>代价</dt><dd>Tauri 的 WebView 在旧 Windows 上偶有差异；Svelte 生态比 React 小。</dd>
+      </dl>
+    </div>
+
+    <div class="dr">
+      <div class="dr-top"><span class="dr-id">D-12</span><span class="chip lo">范围</span></div>
+      <h5>先做导出器，再做注入器</h5>
+      <dl>
+        <dt>理由</dt><dd class="now">在写任何平台代码之前，先把笔记本导出成 Windows Terminal 的 <code>sendInput</code> snippets、espanso YAML、shell alias。几乎零成本，让工具第一天就有用，同时观察自己真实的使用姿势。</dd>
+        <dt>代价</dt><dd>几乎没有 —— 这是纯赚的。</dd>
+      </dl>
+    </div>
+
+  </div>
+</section>
+
+<!-- ══════════════ 6 ══════════════ -->
+<section id="s6">
+  <div class="sec-head"><span class="sec-num">06</span><h2>捕获：对抗空笔记本</h2></div>
+  <div class="col">
+    <div class="note warn">
+      <span class="note-label">这是最大的产品风险，而且不是技术风险</span>
+      <p>这类工具绝大多数死于同一件事：<b>用户装了，然后笔记本一直是空的。</b>所以捕获比存储重要一百倍，M0 就得有。</p>
+    </div>
+
+    <ul>
+      <li><code>jot save</code> —— 抓上一条命令直接存，绑 <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd>。widget 模式下能直接拿到当前缓冲区。</li>
+      <li><code>jot import history</code> —— 扫 shell 历史，<b>按频次排序</b>，交互勾选。Windows 在 <code>%APPDATA%\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt</code>，bash/zsh 各自的 history 文件。导入时自动跳过看起来像 token / 密码的参数。</li>
+      <li><b>反向参数化</b> —— 存 <code>sudo systemctl restart kestrel-orders-api.service</code> 时，jot 发现这个值等于 <code>profile.service</code>，直接问「要不要替换成 <code>{{service}}</code>？」。这一条最讨喜，实现只要一个反向查表。</li>
+      <li>首启向导：检测已安装的 <code>flutter</code> / <code>npm</code> / <code>docker</code> / <code>git</code> / <code>kubectl</code>，推荐对应的社区笔记本 —— 保证第一次打开就不是空的。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ══════════════ 7 ══════════════ -->
+<section id="s7">
+  <div class="sec-head"><span class="sec-num">07</span><h2>里程碑</h2></div>
+  <div class="col">
+    <p>顺序是刻意的：<b>M0 结束你自己就能天天用了</b>。之后每一步都是可选的，随时停都不亏。</p>
+  </div>
+
+  <div class="track">
+    <div class="ms key">
+      <div class="ms-id">M0 ✓</div>
+      <div class="ms-body">
+        <h5>自己能用 —— 已完成</h5>
+        <p>Markdown 解析 · 索引 · 模糊搜索 · ratatui 选择器 · 三层变量 · 四种 shell widget · <code>jot save</code> · 反向参数化 · <code>jot import history</code> · <b>13 个内置笔记本 / 460 条命令</b>。35 个测试，其中 5 个直接校验内置笔记本本身。</p>
+      </div>
+      <div class="ms-cost">已交付</div>
+    </div>
+    <div class="ms">
+      <div class="ms-id">M1</div>
+      <div class="ms-body">
+        <h5>打磨与分发</h5>
+        <p>索引缓存 · 导出器（D-12）· CI 出三平台二进制 · winget / scoop / homebrew · 更多内置笔记本（mssql / redis / nginx / adb）</p>
+      </div>
+      <div class="ms-cost">约 1 周</div>
+    </div>
+    <div class="ms">
+      <div class="ms-id">M2</div>
+      <div class="ms-body">
+        <h5>社区笔记本</h5>
+        <p><code>jot add gh:user/repo</code> · <code>jot sync</code> · 信任分级（D-09）· notebooks 仓库开张 + CI 生成 index.json</p>
+      </div>
+      <div class="ms-cost">约 1 周</div>
+    </div>
+    <div class="ms">
+      <div class="ms-id">M3</div>
+      <div class="ms-body">
+        <h5>GUI 与键盘注入</h5>
+        <p>Tauri 托盘常驻 · 全局热键 Palette · CodeMirror 笔记本编辑器 · <b>Windows 键盘注入</b>。这一段是时间黑洞的主体。</p>
+      </div>
+      <div class="ms-cost">2–4 周</div>
+    </div>
+    <div class="ms">
+      <div class="ms-id">M4</div>
+      <div class="ms-body">
+        <h5>跨平台收尾</h5>
+        <p>macOS / Linux 注入与权限引导 · CI 出三平台二进制 · winget / scoop / homebrew · 文档站</p>
+      </div>
+      <div class="ms-cost">开放式</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 8 ══════════════ -->
+<section id="s8">
+  <div class="sec-head"><span class="sec-num">08</span><h2>风险登记</h2></div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>风险</th><th>影响</th><th>缓解</th></tr></thead>
+      <tbody>
+        <tr><td>Wayland 禁止合成输入</td><td><span class="chip hi">高</span></td><td>README 明写不支持；自动降级剪贴板；<code>ydotool</code> 作为可选后端</td></tr>
+        <tr><td>杀软 / EDR 拦截键盘模拟</td><td><span class="chip hi">高</span></td><td>注入通道可完全关闭；优先试 <code>WriteConsoleInput</code>；发布签名版本</td></tr>
+        <tr><td>冷启动超过 50ms</td><td><span class="chip hi">高</span></td><td>索引缓存 + widget 路径零网络 IO；CI 里加启动耗时回归测试</td></tr>
+        <tr><td>数据格式过早锁定</td><td><span class="chip md">中</span></td><td><code>spec_version</code> 从 v1 就写；M0 只自用，跑一个月再公开</td></tr>
+        <tr><td>macOS 辅助功能权限静默失效</td><td><span class="chip md">中</span></td><td>启动自检 + 引导页；失效时降级而不是报错</td></tr>
+        <tr><td>维护负债压垮项目</td><td><span class="chip hi">高</span></td><td>§1「不做」清单写进 README；notebooks 与 client 分仓，把高频低风险的贡献引流到前者</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ══════════════ 9 ══════════════ -->
+<section id="s9">
+  <div class="sec-head"><span class="sec-num">09</span><h2>M0 落地时定下的事</h2></div>
+  <div class="col">
+
+    <div class="oq">
+      <div class="oq-id">Q-1</div>
+      <div>
+        <p><b>名字 → <code>jot</code>。</b>三个字母，语义正好是「记一笔」。BSD 有个同名小工具，但 Linux / Windows 上这个名字基本是空的。</p>
+        <p class="rec"><b>可改</b> —— 只需改 <code>[[bin]] name</code> 和四个 shell 集成脚本。</p>
+      </div>
+    </div>
+
+    <div class="oq">
+      <div class="oq-id">Q-2</div>
+      <div>
+        <p><b>热键 → PowerShell <kbd>Ctrl</kbd>+<kbd>J</kbd>，bash / zsh / fish <kbd>Ctrl</kbd>+<kbd>G</kbd>。</b>两边不一致是有原因的：<code>Ctrl</code>+<code>J</code> 在终端里就是 LF，在 readline 下等价于回车，绑它会毁掉换行；而 PSReadLine 收到的是独立的按键事件，没这个问题。</p>
+        <p class="rec"><code>jot init bash --key '\C-o'</code> 可以自定义。</p>
+      </div>
+    </div>
+
+    <div class="oq">
+      <div class="oq-id">Q-3</div>
+      <div>
+        <p><b>一个标题下多个代码块 → 各自独立条目。</b>多步骤 runbook 不做，那是 Atuin Desktop 的地盘。</p>
+        <p class="rec">实际写内置笔记本时印证了这个选择：同一件事的 Windows 版和 bash 版本来就该是两条各带 <code>@platform</code> 的独立条目。</p>
+      </div>
+    </div>
+
+    <div class="oq">
+      <div class="oq-id">Q-4</div>
+      <div>
+        <p><b><code>@confirm</code> → 已实现。</b>460 条内置命令里有 61 条带这个标记。</p>
+        <p class="rec">它和 D-04 一起构成产品的安全叙事：<b>jot 从不执行，且危险的那些还要再确认一次。</b></p>
+      </div>
+    </div>
+
+    <div class="oq">
+      <div class="oq-id">Q-5</div>
+      <div>
+        <p><b>新问题：<code>{{ }}</code> 与 Go 模板撞车。</b>写 docker / kubectl 笔记本时立刻撞上 —— <code>docker ps --format "{{.Names}}"</code>。</p>
+        <p class="rec"><b>已解决，用户零负担：</b>只有内容是纯标识符的才算变量。<code>{{.Names}}</code> 以点开头、<code>{{range .X}}</code> 含空格，都自动当字面量；<code>{{end}}</code> 这种与标识符同形的由保留字表兜住。有单元测试守着。</p>
+      </div>
+    </div>
+
+    <div class="oq">
+      <div class="oq-id">Q-6</div>
+      <div>
+        <p><b>新问题：GNU host 工具链在 Windows 上编不过</b> —— <code>dlltool</code> 需要 <code>as</code>，rustup 的 self-contained 目录里没有。</p>
+        <p class="rec"><b>改用 MSVC host</b>（机器上已有 VS 2026 的 C++ 工具链）。README 里记了这个坑。</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+</div>

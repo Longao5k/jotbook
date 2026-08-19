@@ -1,0 +1,12 @@
+# 仓库里一律用 LF，避免 Windows 检出后污染跨平台文件
+* text=auto eol=lf
+
+*.rs    text eol=lf
+*.toml  text eol=lf
+*.md    text eol=lf
+*.html  text eol=lf
+*.yml   text eol=lf
+*.sh    text eol=lf
+
+*.png   binary
+*.exe   binary

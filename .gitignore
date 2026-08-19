@@ -1,0 +1,7 @@
+/target
+**/*.rs.bk
+*.pdb
+
+# 用户数据不进仓库
+/.jot
+profiles.toml

@@ -285,7 +285,7 @@ figcaption{
 <div class="wrap">
 
 <header class="mast">
-  <div class="mast-eyebrow">架构设计 · M0 已落地</div>
+  <div class="mast-eyebrow">架构设计 · M0–M2 已落地</div>
   <h1>Jotbook<span class="tld"> / jot</span></h1>
   <p class="thesis">一个存你自己命令的笔记本。<b>它解决的是检索问题，不是生成问题</b> —— 命令你早就知道、早就跑通过，你只是不想再翻一遍聊天记录。</p>
   <div class="meta">
@@ -294,6 +294,7 @@ figcaption{
     <span><b>栈</b> Rust 1.97 · MSVC</span>
     <span><b>后端</b> 无</span>
     <span><b>内置</b> 19 本 · 632 条</span>
+    <span><b>测试</b> 85</span>
     <span><b>冷启动</b> 38ms</span>
   </div>
 </header>
@@ -727,8 +728,9 @@ zle -N __jot_widget; bindkey <span class="s">'^G'</span> __jot_widget</pre>
       <div class="dr-top"><span class="dr-id">D-08</span><span class="chip md">分发</span></div>
       <h5>零后端：GitHub tarball + index.json</h5>
       <dl>
-        <dt>理由</dt><dd class="now">CI 生成索引发到 Pages，客户端从 <code>codeload.github.com</code> 拉 tarball，不需要 git 也不需要鉴权。零服务器、零账号、零合规负担。tldr 靠同样的模式攒到了几千贡献者。</dd>
-        <dt>代价</dt><dd>没有使用数据。<em>这对你是好事</em>。</dd>
+        <dt>理由</dt><dd class="now">零服务器、零账号、零合规负担。tldr 靠同样的模式攒到了几千贡献者。</dd>
+        <dt>落地改动</dt><dd class="now"><b>最终用 <code>git clone</code> 而不是 tarball + index.json。</b>实现时发现直接调 <code>git</code> 反而更好：零新增 Rust 依赖，而且私有仓库、SSH 认证、增量更新、本地改动检测全都免费拿到，用户还能自己 clone 进那个目录。索引站可以以后再做，不是前置条件。</dd>
+        <dt>代价</dt><dd>依赖机器上有 git（目标用户必然有）。没有使用数据 —— <em>这对你是好事</em>。</dd>
       </dl>
     </div>
 
@@ -737,6 +739,7 @@ zle -N __jot_widget; bindkey <span class="s">'^G'</span> __jot_widget</pre>
       <h5>社区源默认禁用 <code>from: shell</code></h5>
       <dl>
         <dt>理由</dt><dd class="now">动态变量源 = 任意代码执行，只要预览一下就中招 —— 这是整个品类的漏洞，navi 也有。分级：<code>none</code>（禁用）/ <code>prompt</code>（首次弹完整命令确认，按内容 hash 记忆）/ <code>full</code>（仅本地笔记本）。</dd>
+        <dt>已落地</dt><dd class="now"><code>builtin/</code> 与 <code>local/</code> 之外的一切默认禁用动态变量，<code>jot trust &lt;名字&gt;</code> 显式打开。有 5 个专门的测试守着这条性质，包括「授信 A 源不能顺带放行 B 源」。</dd>
         <dt>代价</dt><dd>社区笔记本体验略打折，值得。</dd>
       </dl>
     </div>
@@ -806,20 +809,20 @@ zle -N __jot_widget; bindkey <span class="s">'^G'</span> __jot_widget</pre>
       <div class="ms-cost">已交付</div>
     </div>
     <div class="ms">
-      <div class="ms-id">M1</div>
+      <div class="ms-id">M1 ✓</div>
       <div class="ms-body">
-        <h5>打磨与分发</h5>
-        <p>索引缓存 · 导出器（D-12）· CI 出三平台二进制 · winget / scoop / homebrew · 更多内置笔记本（mssql / redis / nginx / adb）</p>
+        <h5>打磨 —— 已完成</h5>
+        <p>frecency 排序 · CI（三平台测试 + lint + 笔记本校验）· release 工作流出四平台二进制 · 新增 mssql / mysql / redis / nginx / tmux / macos 六本笔记本</p>
       </div>
-      <div class="ms-cost">约 1 周</div>
+      <div class="ms-cost">已交付</div>
     </div>
     <div class="ms">
-      <div class="ms-id">M2</div>
+      <div class="ms-id">M2 ✓</div>
       <div class="ms-body">
-        <h5>社区笔记本</h5>
-        <p><code>jot add gh:user/repo</code> · <code>jot sync</code> · 信任分级（D-09）· notebooks 仓库开张 + CI 生成 index.json</p>
+        <h5>社区笔记本 —— 已完成</h5>
+        <p><code>jot add gh:user/repo</code> · <code>sync</code> / <code>sources</code> / <code>remove</code> / <code>trust</code> · 信任分级（D-09）。基于 git，零新增依赖。</p>
       </div>
-      <div class="ms-cost">约 1 周</div>
+      <div class="ms-cost">已交付</div>
     </div>
     <div class="ms">
       <div class="ms-id">M3</div>

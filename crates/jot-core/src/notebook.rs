@@ -56,6 +56,8 @@ pub struct Entry {
     pub remote: bool,
     pub source: PathBuf,
     pub line: usize,
+    /// 来自可信位置（内置 / 本地 / 已授信的源）。不可信的条目禁用动态变量。
+    pub trusted: bool,
 }
 
 impl Entry {
@@ -250,6 +252,7 @@ pub fn parse(path: &Path, text: &str) -> Result<Notebook> {
                         remote: info.remote,
                         source: path.to_path_buf(),
                         line: fence_start,
+                        trusted: true,
                     });
                 }
             } else {

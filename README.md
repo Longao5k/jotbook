@@ -8,7 +8,7 @@
 A notebook for the commands **you** actually use. Hit one key, the command lands on your prompt — you press Enter.
 
 ```
-┌ jot  4/366 ──────────────────────────────────────┐
+┌ jot  4/459 ──────────────────────────────────────┐
 │ › docker logs                                    │
 └──────────────────────────────────────────────────┘
 ❯ Follow container logs                     docker
@@ -110,6 +110,11 @@ jot                                                      # go
 | `jot new <name>` | Create a notebook |
 | `jot use <profile>` | Switch profile |
 | `jot profile set <k> <v>` | Set a profile variable |
+| `jot add gh:user/repo` | Install a community notebook source (a git repo) |
+| `jot sources` | List installed sources |
+| `jot sync [name]` | Update sources |
+| `jot trust <name>` | Let a source's `from: shell` variables actually run |
+| `jot remove <name>` | Uninstall a source |
 | `jot doctor` | Self-check |
 | `jot path` | Print the data directory |
 | `jot pick -q "<term>" --first` | No UI, best match straight to stdout (for scripts) |
@@ -170,13 +175,32 @@ sudo systemctl restart {{service}}                  # this one is a variable
 
 For a literal `{{name}}`, write `\{{name}}`.
 
+## Community notebooks
+
+A source is just a git repo. jot shells out to `git`, so private repos, SSH keys, and incremental updates all work with no extra setup.
+
+```bash
+jot add gh:someone/jot-notebooks
+```
+
+jot looks for a `notebooks/` directory, falling back to `*.md` at the repo root (README, LICENSE and friends are skipped). Sources live in `~/.jot/notebooks/sources/<name>/` — you can also just `git clone` into that directory yourself.
+
+**Sources are untrusted by default.** A notebook's `from: shell` variable runs an arbitrary command on your machine just to *populate a list* — merely browsing a hostile notebook would be enough. So for anything outside `builtin/` and `local/`, dynamic variables are disabled until you read the notebook and opt in:
+
+```bash
+jot trust someone-jot-notebooks
+```
+
+Everything else about an untrusted source works normally. And the command itself is still only ever *typed onto your prompt*, never executed.
+
 ## Where things live
 
 ```
 ~/.jot/
 ├── notebooks/
 │   ├── builtin/     shipped with the binary; rewritten on upgrade
-│   └── local/       yours; never touched
+│   ├── local/       yours; never touched
+│   └── sources/     community sources (git clones); untrusted by default
 ├── config.toml      active profile
 ├── profiles.toml    your environment's constants — not for secrets
 └── usage.toml       how often you use each entry, for ranking

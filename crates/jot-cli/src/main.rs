@@ -24,7 +24,7 @@ const EXIT_CANCEL: i32 = 130;
 
 const SUBCOMMANDS: &[&str] = &[
     "pick", "save", "ls", "list", "init", "edit", "new", "use", "profile", "import", "doctor",
-    "path", "help",
+    "path", "help", "add", "sync", "sources", "remove", "trust", "untrust",
 ];
 
 #[derive(Parser)]
@@ -93,6 +93,24 @@ enum Cmd {
         #[command(subcommand)]
         what: ImportCmd,
     },
+    /// 装一个社区笔记本源（git 仓库）
+    Add {
+        /// git URL，或 gh:user/repo / gl:user/repo 简写
+        url: String,
+        /// 自定义本地名字
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// 更新社区源；不给名字就全部更新
+    Sync { name: Option<String> },
+    /// 列出已装的社区源
+    Sources,
+    /// 卸载一个社区源
+    Remove { name: String },
+    /// 授信一个源，允许它的 from: shell 变量执行
+    Trust { name: String },
+    /// 撤销授信
+    Untrust { name: String },
     /// 自检
     Doctor,
     /// 打印数据目录
@@ -177,6 +195,12 @@ fn run() -> Result<i32> {
         Some(Cmd::Import { what }) => match what {
             ImportCmd::History { top } => cmd_import_history(top),
         },
+        Some(Cmd::Add { url, name }) => cmd_add(&url, name.as_deref()),
+        Some(Cmd::Sync { name }) => cmd_sync(name.as_deref()),
+        Some(Cmd::Sources) => cmd_sources(),
+        Some(Cmd::Remove { name }) => cmd_remove(&name),
+        Some(Cmd::Trust { name }) => cmd_trust(&name, true),
+        Some(Cmd::Untrust { name }) => cmd_trust(&name, false),
         Some(Cmd::Doctor) => cmd_doctor(),
         Some(Cmd::Path) => cmd_path(),
     }
@@ -243,7 +267,9 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
             decls.get(&r.name),
             &profiles,
             cfg.profile_name(),
-            !entry.remote,
+            // 不可信的外部源禁用 from: shell（D-09）；@remote 同理，
+            // 那类条目在 ssh 之后使用，动态候选会在本地求值
+            entry.trusted && !entry.remote,
         );
         let context = vars::render(&entry.command, &values);
         let got = match plan {
@@ -635,6 +661,127 @@ fn cmd_profile(action: Option<ProfileCmd>) -> Result<i32> {
             eprintln!("jot: [{current}] 已删除 {key}");
         }
     }
+    Ok(0)
+}
+
+// ─────────────────────────── 社区源 ───────────────────────────
+
+fn cmd_add(url: &str, name: Option<&str>) -> Result<i32> {
+    let paths = Paths::discover()?;
+    let src = jot_core::sources::add(&paths, url, name)?;
+
+    let lib = Library::load(&paths)?;
+    let dir = jot_core::sources::notebook_dir(&src.path);
+    let n: usize = lib
+        .notebooks
+        .iter()
+        .filter(|nb| nb.path.starts_with(&dir))
+        .map(|nb| nb.entries.len())
+        .sum();
+
+    eprintln!("jot: 装好 «{}» → {} 条命令", src.name, n);
+    if n == 0 {
+        eprintln!(
+            "jot: 这个仓库里没找到可用的笔记本。jot 会看 notebooks/ 子目录，没有就看仓库根的 *.md"
+        );
+    }
+    eprintln!(
+        "jot: 外部源的动态变量（from: shell）默认禁用 —— 那是任意代码执行。
+     看过内容确认没问题后用 `jot trust {}` 打开。",
+        src.name
+    );
+    Ok(0)
+}
+
+fn cmd_sync(name: Option<&str>) -> Result<i32> {
+    let paths = Paths::discover()?;
+    let cfg = Config::load(&paths);
+    let all = jot_core::sources::list(&paths, &cfg.trusted_sources);
+    if all.is_empty() {
+        bail!("还没装任何社区源。用 `jot add gh:user/repo` 装一个");
+    }
+    let targets: Vec<_> = match name {
+        Some(n) => all.into_iter().filter(|s| s.name == n).collect(),
+        None => all,
+    };
+    if targets.is_empty() {
+        bail!("没有叫 «{}» 的源", name.unwrap_or(""));
+    }
+    for src in &targets {
+        match jot_core::sources::sync(src) {
+            Ok(true) => eprintln!("jot: {} 已更新", src.name),
+            Ok(false) => eprintln!("jot: {} 已是最新", src.name),
+            Err(e) => eprintln!("jot: {} 更新失败：{e}", src.name),
+        }
+    }
+    Ok(0)
+}
+
+fn cmd_sources() -> Result<i32> {
+    let paths = Paths::discover()?;
+    let cfg = Config::load(&paths);
+    let lib = Library::load(&paths)?;
+    let all = jot_core::sources::list(&paths, &cfg.trusted_sources);
+    if all.is_empty() {
+        println!("还没装任何社区源。");
+        println!("  jot add gh:user/repo");
+        return Ok(0);
+    }
+    for src in all {
+        let dir = jot_core::sources::notebook_dir(&src.path);
+        let n: usize = lib
+            .notebooks
+            .iter()
+            .filter(|nb| nb.path.starts_with(&dir))
+            .map(|nb| nb.entries.len())
+            .sum();
+        println!(
+            "{:<20} {:>4} 条   {}   {}",
+            src.name,
+            n,
+            if src.trusted {
+                "已授信"
+            } else {
+                "未授信"
+            },
+            src.url.unwrap_or_default()
+        );
+    }
+    Ok(0)
+}
+
+fn cmd_remove(name: &str) -> Result<i32> {
+    let paths = Paths::discover()?;
+    jot_core::sources::remove(&paths, name)?;
+    let mut cfg = Config::load(&paths);
+    cfg.trusted_sources.retain(|t| t != name);
+    cfg.save(&paths)?;
+    eprintln!("jot: 已卸载 «{name}»");
+    Ok(0)
+}
+
+fn cmd_trust(name: &str, on: bool) -> Result<i32> {
+    let paths = Paths::discover()?;
+    let mut cfg = Config::load(&paths);
+    let exists = jot_core::sources::list(&paths, &cfg.trusted_sources)
+        .iter()
+        .any(|s| s.name == name);
+    if !exists {
+        bail!("没有叫 «{name}» 的源。已装的看 `jot sources`");
+    }
+    cfg.trusted_sources.retain(|t| t != name);
+    if on {
+        cfg.trusted_sources.push(name.to_string());
+    }
+    cfg.save(&paths)?;
+    eprintln!(
+        "jot: «{name}» {}",
+        if on {
+            "已授信 —— 它的 from: shell 变量现在会真的执行"
+        } else {
+            "已撤销授信"
+        }
+    );
     Ok(0)
 }
 

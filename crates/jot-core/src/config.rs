@@ -44,6 +44,9 @@ impl Paths {
     pub fn profiles_file(&self) -> PathBuf {
         self.root.join("profiles.toml")
     }
+    pub fn sources_dir(&self) -> PathBuf {
+        self.notebooks().join("sources")
+    }
     pub fn usage_file(&self) -> PathBuf {
         self.root.join("usage.toml")
     }
@@ -73,6 +76,9 @@ pub struct Config {
     /// 「装 shell 集成」的提示已经显示过几次。显示够了就不再唠叨。
     #[serde(default)]
     pub hints_shown: u32,
+    /// 被显式授信的外部源。只有这些源的 from: shell 变量才会真的执行。
+    #[serde(default)]
+    pub trusted_sources: Vec<String>,
 }
 
 /// 同一条提示最多说这么多次。

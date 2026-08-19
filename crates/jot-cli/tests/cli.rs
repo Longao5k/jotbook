@@ -348,3 +348,170 @@ fn a_broken_notebook_does_not_break_the_rest() {
     );
     assert!(stderr(&o).contains("跳过"), "没有提示哪本笔记本被跳过了");
 }
+
+// ─────────────────────── 社区源 ───────────────────────
+
+/// 造一个本地 git 仓库当社区源，全程离线。
+fn make_source_repo(tag: &str) -> PathBuf {
+    let repo = std::env::temp_dir().join(format!("jot-src-{}-{}", tag, std::process::id()));
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(repo.join("notebooks")).unwrap();
+    std::fs::write(
+        repo.join("notebooks").join("shared.md"),
+        "---\nname: shared\ndescription: 共享笔记本\n---\n\n## 社区提供的命令\n\n```sh\necho from-community\n```\n",
+    )
+    .unwrap();
+    std::fs::write(
+        repo.join("README.md"),
+        "# 这个仓库\n\n## 安装\n\n```sh\necho readme\n```\n",
+    )
+    .unwrap();
+
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .current_dir(&repo)
+            .args(args)
+            .output()
+            .expect("git 跑不起来");
+    };
+    git(&["init", "-b", "main"]);
+    git(&["add", "-A"]);
+    git(&[
+        "-c",
+        "user.name=test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-m",
+        "init",
+    ]);
+    repo
+}
+
+#[test]
+fn a_community_source_can_be_added_listed_and_removed() {
+    let home = temp_home("sources");
+    let repo = make_source_repo("basic");
+    let repo_str = repo.to_string_lossy().replace('\\', "/");
+
+    let add = jot(&home, &["add", &repo_str, "--name", "community"]);
+    assert!(add.status.success(), "{}", stderr(&add));
+    assert!(
+        stderr(&add).contains("1 条"),
+        "没报告条目数：{}",
+        stderr(&add)
+    );
+    // 装完必须提醒动态变量是禁用的
+    assert!(
+        stderr(&add).contains("trust"),
+        "没提示信任模型：{}",
+        stderr(&add)
+    );
+
+    // 条目要能被搜到
+    let picked = jot(&home, &["pick", "-q", "社区提供的命令", "--first"]);
+    assert!(picked.status.success(), "{}", stderr(&picked));
+    assert_eq!(stdout(&picked).trim(), "echo from-community");
+
+    // README 不该被当成笔记本
+    let ls = stdout(&jot(&home, &["ls"]));
+    assert!(ls.contains("# shared"), "社区笔记本没出现在 ls 里");
+    assert!(!ls.contains("echo readme"), "仓库 README 被当成笔记本收了");
+
+    // 列表里默认是未授信
+    let sources = stdout(&jot(&home, &["sources"]));
+    assert!(sources.contains("community"), "{sources}");
+    assert!(
+        sources.contains("未授信"),
+        "外部源默认就被信任了：{sources}"
+    );
+
+    // 授信 / 撤销
+    assert!(jot(&home, &["trust", "community"]).status.success());
+    assert!(stdout(&jot(&home, &["sources"])).contains("已授信"));
+    assert!(jot(&home, &["untrust", "community"]).status.success());
+    assert!(stdout(&jot(&home, &["sources"])).contains("未授信"));
+
+    // 卸载
+    assert!(jot(&home, &["remove", "community"]).status.success());
+    let after = stdout(&jot(&home, &["sources"]));
+    assert!(!after.contains("community"), "卸载后还在：{after}");
+    assert!(
+        !stdout(&jot(&home, &["ls"])).contains("# shared"),
+        "卸载后条目还在"
+    );
+}
+
+#[test]
+fn adding_the_same_source_twice_is_refused() {
+    let home = temp_home("dupsource");
+    let repo = make_source_repo("dup");
+    let repo_str = repo.to_string_lossy().replace('\\', "/");
+
+    assert!(jot(&home, &["add", &repo_str, "--name", "dup"])
+        .status
+        .success());
+    let again = jot(&home, &["add", &repo_str, "--name", "dup"]);
+    assert!(!again.status.success(), "重复安装没被拒绝");
+    assert!(stderr(&again).contains("jot sync"), "没告诉用户该怎么更新");
+}
+
+#[test]
+fn sync_reports_up_to_date_then_picks_up_changes() {
+    let home = temp_home("syncsource");
+    let repo = make_source_repo("sync");
+    let repo_str = repo.to_string_lossy().replace('\\', "/");
+    assert!(jot(&home, &["add", &repo_str, "--name", "s"])
+        .status
+        .success());
+
+    let first = jot(&home, &["sync", "s"]);
+    assert!(first.status.success(), "{}", stderr(&first));
+    assert!(stderr(&first).contains("已是最新"), "{}", stderr(&first));
+
+    // 上游加一条
+    std::fs::write(
+        repo.join("notebooks").join("shared.md"),
+        "---\nname: shared\n---\n\n## 社区提供的命令\n\n```sh\necho from-community\n```\n\n## 后来加的\n\n```sh\necho newly-added\n```\n",
+    )
+    .unwrap();
+    for args in [
+        vec!["add", "-A"],
+        vec![
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@e.com",
+            "commit",
+            "-m",
+            "more",
+        ],
+    ] {
+        Command::new("git")
+            .current_dir(&repo)
+            .args(&args)
+            .output()
+            .unwrap();
+    }
+
+    let second = jot(&home, &["sync", "s"]);
+    assert!(second.status.success(), "{}", stderr(&second));
+    assert!(stderr(&second).contains("已更新"), "{}", stderr(&second));
+
+    let o = jot(&home, &["pick", "-q", "后来加的", "--first"]);
+    assert_eq!(stdout(&o).trim(), "echo newly-added");
+}
+
+#[test]
+fn unknown_source_names_are_rejected() {
+    let home = temp_home("badsource");
+    jot(&home, &["doctor"]);
+    for args in [
+        vec!["trust", "不存在"],
+        vec!["remove", "不存在"],
+        vec!["sync", "不存在"],
+    ] {
+        let o = jot(&home, &args);
+        assert!(!o.status.success(), "{:?} 居然成功了", args);
+    }
+}

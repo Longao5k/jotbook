@@ -8,7 +8,7 @@
 一个存**你自己**常用命令的笔记本。按一个键，命令就落到命令行上 —— 回车由你按。
 
 ```
-┌ jot  4/366 ──────────────────────────────────────┐
+┌ jot  4/459 ──────────────────────────────────────┐
 │ › docker 日志                                    │
 └──────────────────────────────────────────────────┘
 ❯ 跟踪容器日志                              docker
@@ -110,6 +110,11 @@ jot                                                      # 开始用
 | `jot new <名字>` | 新建笔记本 |
 | `jot use <profile>` | 切换 Profile |
 | `jot profile set <键> <值>` | 设置 Profile 变量 |
+| `jot add gh:user/repo` | 装一个社区笔记本源（git 仓库）|
+| `jot sources` | 列出已装的源 |
+| `jot sync [名字]` | 更新源 |
+| `jot trust <名字>` | 授信，允许该源的 `from: shell` 变量真的执行 |
+| `jot remove <名字>` | 卸载一个源 |
 | `jot doctor` | 自检 |
 | `jot path` | 打印数据目录 |
 | `jot pick -q "<词>" --first` | 不开界面，最佳匹配直接打到 stdout（脚本用） |
@@ -170,13 +175,32 @@ sudo systemctl restart {{service}}                  # 这个才是变量
 
 真要一个字面的 `{{name}}`，写成 `\{{name}}`。
 
+## 社区笔记本
+
+一个源就是一个 git 仓库。jot 直接调 `git`，所以私有仓库、SSH 密钥、增量更新全都不用额外配置。
+
+```bash
+jot add gh:someone/jot-notebooks
+```
+
+jot 会先看 `notebooks/` 子目录，没有就看仓库根的 `*.md`（README、LICENSE 这类会跳过）。源放在 `~/.jot/notebooks/sources/<名字>/`，你也可以自己 `git clone` 进这个目录。
+
+**外部源默认不可信。** 笔记本里的 `from: shell` 变量只是为了**生成一个候选列表**，就会在你机器上执行任意命令 —— 光是浏览一个恶意笔记本就足够中招。所以 `builtin/` 和 `local/` 以外的一切，动态变量都是关的，直到你看过内容并显式打开：
+
+```bash
+jot trust someone-jot-notebooks
+```
+
+未授信不影响其它功能。而且命令本身依然只是被**打到你的命令行上**，从不执行。
+
 ## 数据放在哪
 
 ```
 ~/.jot/
 ├── notebooks/
 │   ├── builtin/     随二进制发布，升级时会被重写
-│   └── local/       你自己的，永远不会被动
+│   ├── local/       你自己的，永远不会被动
+│   └── sources/     社区源（git 克隆），默认不可信
 ├── config.toml      当前 Profile
 ├── profiles.toml    你环境里的常量 —— 不要放密钥
 └── usage.toml       各条目的使用次数，用来排序

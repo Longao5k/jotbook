@@ -7,16 +7,51 @@ pub mod capture;
 pub mod config;
 pub mod notebook;
 pub mod resolve;
+pub mod sources;
 pub mod usage;
 pub mod vars;
 
 pub use config::{Config, Paths, Profiles};
 pub use notebook::{Entry, Notebook, VarDecl};
+pub use sources::Source;
 pub use usage::Usage;
 pub use vars::{Seg, VarRef};
 
 use anyhow::Result;
 use std::time::Instant;
+
+/// 读一个目录里的 .md。单个文件写坏不应该让整个工具起不来。
+fn load_dir(dir: &std::path::Path, trusted: bool, skip_boilerplate: bool, out: &mut Vec<Notebook>) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<_> = rd
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|e| e == "md").unwrap_or(false))
+        .filter(|p| !(skip_boilerplate && sources::is_boilerplate(p)))
+        .collect();
+    files.sort();
+    for path in files {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        match notebook::parse(&path, &text) {
+            Ok(mut nb) => {
+                if !trusted {
+                    for e in &mut nb.entries {
+                        e.trusted = false;
+                    }
+                }
+                // 外部源里的普通 markdown 常常一条命令都没有，不要污染列表
+                if !nb.entries.is_empty() {
+                    out.push(nb);
+                }
+            }
+            Err(e) => eprintln!("jot: 跳过 {}: {e}", path.display()),
+        }
+    }
+}
 
 /// 全部笔记本 + 一次加载的耗时统计。
 pub struct Library {
@@ -32,28 +67,17 @@ impl Library {
         builtin::seed_if_missing(paths)?;
 
         let t0 = Instant::now();
+        let trusted = Config::load(paths).trusted_sources;
         let mut notebooks = Vec::new();
+
+        // 自带的和用户自己的：完全信任
         for dir in paths.notebook_dirs() {
-            if !dir.is_dir() {
-                continue;
-            }
-            let mut files: Vec<_> = std::fs::read_dir(&dir)?
-                .filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .filter(|p| p.extension().map(|e| e == "md").unwrap_or(false))
-                .collect();
-            files.sort();
-            for path in files {
-                let text = match std::fs::read_to_string(&path) {
-                    Ok(t) => t,
-                    Err(_) => continue,
-                };
-                match notebook::parse(&path, &text) {
-                    Ok(nb) => notebooks.push(nb),
-                    // 单个笔记本写坏了不应该让整个工具起不来
-                    Err(e) => eprintln!("jot: 跳过 {}: {e}", path.display()),
-                }
-            }
+            load_dir(&dir, true, false, &mut notebooks);
+        }
+        // 外部源：默认不信任，from: shell 会被禁用（D-09）
+        for src in sources::list(paths, &trusted) {
+            let dir = sources::notebook_dir(&src.path);
+            load_dir(&dir, src.trusted, true, &mut notebooks);
         }
 
         Ok(Library {

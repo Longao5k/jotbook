@@ -2,6 +2,9 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
+[![CI](https://github.com/Longao5k/jotbook/actions/workflows/ci.yml/badge.svg)](https://github.com/Longao5k/jotbook/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A notebook for the commands **you** actually use. Hit one key, the command lands on your prompt — you press Enter.
 
 ```
@@ -149,6 +152,8 @@ sudo systemctl restart {{service}}
 | `ask` (default) | Prompts you. Add `options` for a fixed list |
 | `profile` | Taken from the active profile without interrupting you; falls back if unset |
 | `shell` | Runs `cmd`, turns the output into a searchable candidate list |
+
+An **undeclared** `{{name}}` also checks the active profile first. That's what makes `jot save`'s auto-parameterization work end to end — it rewrites the value into `{{service}}` without adding a declaration, and the result still resolves. Write `from: ask` explicitly when you always want to be prompted.
 
 Built-ins: `{{@cwd}}` `{{@date}}` `{{@host}}` `{{@git.branch}}` `{{@git.root}}` `{{@env.NAME}}`
 Inline defaults: `{{port=8080}}`

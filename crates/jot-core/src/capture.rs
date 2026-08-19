@@ -59,15 +59,28 @@ fn normalize_line(raw: &str) -> Option<String> {
 pub fn looks_secret(cmd: &str) -> bool {
     let l = cmd.to_ascii_lowercase();
     const NEEDLES: &[&str] = &[
-        "password", "passwd", "token", "secret", "api_key", "apikey", "私钥",
-        "private_key", "credential", "bearer ", "authorization:", "--pass",
+        "password",
+        "passwd",
+        "token",
+        "secret",
+        "api_key",
+        "apikey",
+        "私钥",
+        "private_key",
+        "credential",
+        "bearer ",
+        "authorization:",
+        "--pass",
     ];
     if NEEDLES.iter().any(|n| l.contains(n)) {
         return true;
     }
     // 长串无空格的随机字符，多半是 key
-    cmd.split_whitespace()
-        .any(|w| w.len() >= 40 && w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+    cmd.split_whitespace().any(|w| {
+        w.len() >= 40
+            && w.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    })
 }
 
 fn is_noise(cmd: &str) -> bool {
@@ -88,9 +101,13 @@ pub fn history_ranked(limit: usize) -> Vec<HistItem> {
     let mut order: Vec<String> = Vec::new();
 
     for file in history_files() {
-        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
         for raw in text.lines() {
-            let Some(cmd) = normalize_line(raw) else { continue };
+            let Some(cmd) = normalize_line(raw) else {
+                continue;
+            };
             if is_noise(&cmd) || looks_secret(&cmd) {
                 continue;
             }
@@ -118,9 +135,13 @@ pub fn history_ranked(limit: usize) -> Vec<HistItem> {
 pub fn last_command() -> Option<String> {
     let mut newest: Option<(std::time::SystemTime, String)> = None;
     for file in history_files() {
-        let Ok(meta) = std::fs::metadata(&file) else { continue };
+        let Ok(meta) = std::fs::metadata(&file) else {
+            continue;
+        };
         let Ok(mtime) = meta.modified() else { continue };
-        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
         let last = text
             .lines()
             .rev()
@@ -173,15 +194,14 @@ pub fn guess_title(command: &str) -> String {
 /// 根据命令内容猜围栏语言。
 pub fn guess_lang(command: &str) -> &'static str {
     let l = command.trim_start().to_ascii_lowercase();
-    if l.starts_with("select ") || l.starts_with("insert ") || l.starts_with("update ")
-        || l.starts_with("delete ") || l.starts_with("with ")
-    {
+    const SQL: &[&str] = &["select ", "insert ", "update ", "delete ", "with "];
+    const PS: &[&str] = &[
+        "get-", "set-", "new-", "remove-", "start-", "stop-", "$env:",
+    ];
+
+    if SQL.iter().any(|p| l.starts_with(p)) {
         "sql"
-    } else if l.starts_with("get-") || l.starts_with("set-") || l.starts_with("$env:")
-        || l.starts_with("new-") || l.starts_with("remove-") || l.starts_with("start-")
-    {
-        "ps1"
-    } else if cfg!(target_os = "windows") {
+    } else if PS.iter().any(|p| l.starts_with(p)) || cfg!(target_os = "windows") {
         "ps1"
     } else {
         "sh"
@@ -247,7 +267,10 @@ mod tests {
 
     #[test]
     fn fish_prefix_is_stripped() {
-        assert_eq!(normalize_line("- cmd: git status").as_deref(), Some("git status"));
+        assert_eq!(
+            normalize_line("- cmd: git status").as_deref(),
+            Some("git status")
+        );
     }
 
     #[test]

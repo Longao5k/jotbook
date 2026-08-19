@@ -120,15 +120,13 @@ fn split_frontmatter(text: &str) -> (Option<&str>, &str, usize) {
     let rest = &t[after..];
     // 找到独占一行的 ---
     let mut offset = 0usize;
-    let mut lines = 1usize;
-    for line in rest.split_inclusive('\n') {
+    for (lines, line) in (1usize..).zip(rest.split_inclusive('\n')) {
         if line.trim_end() == "---" {
             let fm = &rest[..offset];
             let body_start = after + offset + line.len();
             return (Some(fm), &t[body_start..], lines + 1);
         }
         offset += line.len();
-        lines += 1;
     }
     (None, t, 0)
 }
@@ -253,7 +251,11 @@ pub fn parse(path: &Path, text: &str) -> Result<Notebook> {
                 // 去掉围栏本身的缩进
                 let s = if fence_indent > 0 && raw_line.len() >= fence_indent {
                     let (lead, rest) = raw_line.split_at(fence_indent);
-                    if lead.trim().is_empty() { rest } else { raw_line }
+                    if lead.trim().is_empty() {
+                        rest
+                    } else {
+                        raw_line
+                    }
                 } else {
                     raw_line
                 };
@@ -264,7 +266,11 @@ pub fn parse(path: &Path, text: &str) -> Result<Notebook> {
 
         if let Some((indent, info)) = fence_marker(raw_line) {
             in_fence = true;
-            fence_ticks = raw_line.trim_start().chars().take_while(|c| *c == '`').count();
+            fence_ticks = raw_line
+                .trim_start()
+                .chars()
+                .take_while(|c| *c == '`')
+                .count();
             fence_indent = indent;
             fence_info = info.to_string();
             fence_start = lineno;

@@ -99,7 +99,7 @@ impl Ui {
                 .filter_map(|(i, _)| score(&matcher, &hays[i], &query).map(|s| (i, s)))
                 .collect();
             if !query.is_empty() {
-                hits.sort_by(|a, b| b.1.cmp(&a.1));
+                hits.sort_by_key(|h| std::cmp::Reverse(h.1));
             }
             if cursor >= hits.len() {
                 cursor = hits.len().saturating_sub(1);
@@ -157,7 +157,10 @@ impl Ui {
                         ListItem::new(vec![
                             Line::from(head),
                             Line::from(Span::styled(
-                                format!("  {}", clamp_line(&jot_core::vars::preview(&e.command), width)),
+                                format!(
+                                    "  {}",
+                                    clamp_line(&jot_core::vars::preview(&e.command), width)
+                                ),
                                 Style::default().fg(Color::Gray),
                             )),
                         ])
@@ -199,7 +202,9 @@ impl Ui {
                 f.render_widget(help, chunks[2]);
             })?;
 
-            let Event::Key(k) = event::read()? else { continue };
+            let Event::Key(k) = event::read()? else {
+                continue;
+            };
             if k.kind != KeyEventKind::Press {
                 continue;
             }
@@ -344,12 +349,18 @@ impl Ui {
                         "输入筛选或直接键入值   ↑↓ 选择   ⏎ 确定   esc 取消",
                         Style::default().fg(DIM),
                     ))
-                    .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(DIM))),
+                    .block(
+                        Block::default()
+                            .borders(Borders::TOP)
+                            .border_style(Style::default().fg(DIM)),
+                    ),
                     chunks[3],
                 );
             })?;
 
-            let Event::Key(k) = event::read()? else { continue };
+            let Event::Key(k) = event::read()? else {
+                continue;
+            };
             if k.kind != KeyEventKind::Press {
                 continue;
             }
@@ -444,16 +455,19 @@ impl Ui {
                     chunks[1],
                 );
                 f.render_widget(
-                    Paragraph::new(Span::styled(
-                        "⏎ 确定   esc 取消",
-                        Style::default().fg(DIM),
-                    ))
-                    .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(DIM))),
+                    Paragraph::new(Span::styled("⏎ 确定   esc 取消", Style::default().fg(DIM)))
+                        .block(
+                            Block::default()
+                                .borders(Borders::TOP)
+                                .border_style(Style::default().fg(DIM)),
+                        ),
                     chunks[3],
                 );
             })?;
 
-            let Event::Key(k) = event::read()? else { continue };
+            let Event::Key(k) = event::read()? else {
+                continue;
+            };
             if k.kind != KeyEventKind::Press {
                 continue;
             }
@@ -479,7 +493,11 @@ impl Ui {
                 let area = f.area();
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints([Constraint::Length(3), Constraint::Min(3), Constraint::Length(2)])
+                    .constraints([
+                        Constraint::Length(3),
+                        Constraint::Min(3),
+                        Constraint::Length(2),
+                    ])
                     .split(area);
 
                 f.render_widget(
@@ -487,13 +505,21 @@ impl Ui {
                         " 这条命令被标记为危险",
                         Style::default().fg(WARN).add_modifier(Modifier::BOLD),
                     ))
-                    .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(WARN))),
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(WARN)),
+                    ),
                     chunks[0],
                 );
                 f.render_widget(
                     Paragraph::new(command.to_string())
                         .wrap(Wrap { trim: false })
-                        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(DIM))),
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(DIM)),
+                        ),
                     chunks[1],
                 );
                 f.render_widget(
@@ -505,7 +531,9 @@ impl Ui {
                 );
             })?;
 
-            let Event::Key(k) = event::read()? else { continue };
+            let Event::Key(k) = event::read()? else {
+                continue;
+            };
             if k.kind != KeyEventKind::Press {
                 continue;
             }
@@ -532,7 +560,11 @@ impl Ui {
                 let area = f.area();
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints([Constraint::Length(3), Constraint::Min(3), Constraint::Length(2)])
+                    .constraints([
+                        Constraint::Length(3),
+                        Constraint::Min(3),
+                        Constraint::Length(2),
+                    ])
                     .split(area);
 
                 let n = checked.iter().filter(|c| **c).count();
@@ -541,7 +573,11 @@ impl Ui {
                         format!(" {title}   已选 {n}/{} ", rows.len()),
                         Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
                     ))
-                    .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(DIM))),
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(DIM)),
+                    ),
                     chunks[0],
                 );
 
@@ -573,12 +609,18 @@ impl Ui {
                         "space 勾选   a 全选   ⏎ 导入所选   esc 取消",
                         Style::default().fg(DIM),
                     ))
-                    .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(DIM))),
+                    .block(
+                        Block::default()
+                            .borders(Borders::TOP)
+                            .border_style(Style::default().fg(DIM)),
+                    ),
                     chunks[2],
                 );
             })?;
 
-            let Event::Key(k) = event::read()? else { continue };
+            let Event::Key(k) = event::read()? else {
+                continue;
+            };
             if k.kind != KeyEventKind::Press {
                 continue;
             }

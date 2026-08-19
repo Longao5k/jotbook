@@ -15,7 +15,10 @@ const RESERVED: &[&str] = &[
 #[derive(Debug, Clone, PartialEq)]
 pub enum Seg {
     Lit(String),
-    Var { name: String, default: Option<String> },
+    Var {
+        name: String,
+        default: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,9 +109,7 @@ pub fn refs(text: &str) -> Vec<VarRef> {
 }
 
 pub fn has_vars(text: &str) -> bool {
-    tokenize(text)
-        .iter()
-        .any(|s| matches!(s, Seg::Var { .. }))
+    tokenize(text).iter().any(|s| matches!(s, Seg::Var { .. }))
 }
 
 /// 用取值表渲染最终文本。缺失的变量退回默认值，再缺就原样保留。
@@ -158,7 +159,10 @@ mod tests {
     fn plain_variable() {
         assert_eq!(
             refs("systemctl restart {{service}}"),
-            vec![VarRef { name: "service".into(), default: None }]
+            vec![VarRef {
+                name: "service".into(),
+                default: None
+            }]
         );
     }
 

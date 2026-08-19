@@ -423,6 +423,7 @@ dependencies = [
  "fuzzy-matcher",
  "jot-core",
  "ratatui",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

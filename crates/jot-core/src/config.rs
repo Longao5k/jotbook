@@ -18,11 +18,15 @@ impl Paths {
         // JOT_HOME 优先，方便测试和便携部署
         if let Ok(p) = std::env::var("JOT_HOME") {
             if !p.trim().is_empty() {
-                return Ok(Paths { root: PathBuf::from(p) });
+                return Ok(Paths {
+                    root: PathBuf::from(p),
+                });
             }
         }
         let home = dirs::home_dir().context("找不到用户主目录")?;
-        Ok(Paths { root: home.join(".jot") })
+        Ok(Paths {
+            root: home.join(".jot"),
+        })
     }
 
     pub fn notebooks(&self) -> PathBuf {
@@ -109,7 +113,10 @@ impl Profiles {
     }
 
     pub fn get(&self, profile: &str, key: &str) -> Option<&str> {
-        self.0.get(profile).and_then(|m| m.get(key)).map(|s| s.as_str())
+        self.0
+            .get(profile)
+            .and_then(|m| m.get(key))
+            .map(|s| s.as_str())
     }
 
     pub fn set(&mut self, profile: &str, key: &str, value: &str) {

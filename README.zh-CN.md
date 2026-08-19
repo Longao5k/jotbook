@@ -2,6 +2,9 @@
 
 [English](README.md) · **简体中文**
 
+[![CI](https://github.com/Longao5k/jotbook/actions/workflows/ci.yml/badge.svg)](https://github.com/Longao5k/jotbook/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 一个存**你自己**常用命令的笔记本。按一个键，命令就落到命令行上 —— 回车由你按。
 
 ```
@@ -149,6 +152,8 @@ sudo systemctl restart {{service}}
 | `ask`（默认） | 每次问你。配 `options` 可以给固定候选 |
 | `profile` | 从当前 Profile 直接取，不打断流程；没配就自动降级 |
 | `shell` | 跑 `cmd`，把输出变成可模糊搜索的候选列表 |
+
+**没有声明**的 `{{name}}` 同样会先查当前 Profile。这是 `jot save` 的自动参数化能闭环的关键 —— 它把值改写成 `{{service}}` 时并不会附带声明，不查 Profile 的话生成出来的条目反而用不了。想每次都被问，就显式写 `from: ask`。
 
 内置变量：`{{@cwd}}` `{{@date}}` `{{@host}}` `{{@git.branch}}` `{{@git.root}}` `{{@env.NAME}}`
 行内默认值：`{{port=8080}}`

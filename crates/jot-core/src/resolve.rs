@@ -89,14 +89,12 @@ fn run_capture(cmd: &str, _timeout: Duration) -> Option<String> {
 pub fn builtin(name: &str) -> Option<String> {
     let key = name.trim_start_matches('@');
     match key {
-        "cwd" => std::env::current_dir().ok().map(|p| p.display().to_string()),
+        "cwd" => std::env::current_dir()
+            .ok()
+            .map(|p| p.display().to_string()),
         "date" => Some(today()),
         "clipboard" => None, // 由前端注入，core 不碰剪贴板
-        "host" => run_capture(
-            if cfg!(target_os = "windows") { "hostname" } else { "hostname" },
-            Duration::from_secs(2),
-        )
-        .map(|s| s.trim().to_string()),
+        "host" => run_capture("hostname", Duration::from_secs(2)).map(|s| s.trim().to_string()),
         "git.branch" => run_capture("git rev-parse --abbrev-ref HEAD", Duration::from_secs(2))
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
@@ -158,14 +156,18 @@ pub fn plan(
         None => name.to_string(),
     };
 
-    if let Some(d) = decl {
-        if d.source() == "profile" {
-            if let Some(v) = profiles.get(profile_name, name) {
-                return Ask::Resolved(v.to_string());
-            }
-            // Profile 里没配，继续往下降级
+    // 没有声明的变量也要查 Profile。`jot save` 的反向参数化生成的 `{{service}}`
+    // 并不会附带 vars: 声明 —— 不查的话，它生成的笔记本反而用不了推导它时
+    // 依据的那个 Profile 值。显式写了 from: ask / from: shell 的除外，那是明确意图。
+    let consult_profile = decl.map(|d| d.source() == "profile").unwrap_or(true);
+    if consult_profile {
+        if let Some(v) = profiles.get(profile_name, name) {
+            return Ask::Resolved(v.to_string());
         }
+        // Profile 里没配，继续往下降级
+    }
 
+    if let Some(d) = decl {
         if allow_shell {
             if let Some(cmd) = d.cmd.as_deref() {
                 let opts = shell_candidates(cmd);
@@ -212,7 +214,7 @@ mod tests {
         assert_eq!(d.len(), 10);
         assert_eq!(&d[4..5], "-");
         let year: i64 = d[..4].parse().unwrap();
-        assert!(year >= 2024 && year < 2100, "算出来的年份不对: {d}");
+        assert!((2024..2100).contains(&year), "算出来的年份不对: {d}");
     }
 
     #[test]
@@ -255,6 +257,36 @@ mod tests {
             Ask::Text { default, .. } => assert_eq!(default.as_deref(), Some("8000")),
             other => panic!("应该是自由输入，得到 {other:?}"),
         }
+    }
+
+    /// `jot save` 的反向参数化不会写 vars: 声明，所以未声明的变量必须查 Profile，
+    /// 否则它生成的笔记本用不了推导它时依据的那个值。
+    #[test]
+    fn undeclared_var_still_consults_profile() {
+        let mut p = Profiles::default();
+        p.set("default", "service", "my-api.service");
+        match plan("service", None, None, &p, "default", false) {
+            Ask::Resolved(v) => assert_eq!(v, "my-api.service"),
+            other => panic!("未声明的变量没有查 Profile，得到 {other:?}"),
+        }
+    }
+
+    /// 显式写了 from: ask 就是明确要问，Profile 不该抢答。
+    #[test]
+    fn explicit_ask_beats_profile() {
+        let mut p = Profiles::default();
+        p.set("default", "service", "my-api.service");
+        let decl = VarDecl {
+            from: Some("ask".into()),
+            ..Default::default()
+        };
+        assert!(
+            matches!(
+                plan("service", None, Some(&decl), &p, "default", false),
+                Ask::Text { .. }
+            ),
+            "from: ask 被 Profile 抢答了"
+        );
     }
 
     #[test]

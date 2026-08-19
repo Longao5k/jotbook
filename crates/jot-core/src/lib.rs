@@ -109,7 +109,10 @@ mod tests {
         .unwrap();
 
         let entry_b = b.entries[0].clone();
-        let lib = Library { notebooks: vec![a, b], load_ms: 0.0 };
+        let lib = Library {
+            notebooks: vec![a, b],
+            load_ms: 0.0,
+        };
         assert_eq!(
             lib.decls_for(&entry_b)["x"].source(),
             "shell",

@@ -17,11 +17,17 @@ pub const BUILTIN: &[(&str, &str)] = &[
     ("dotnet.md", include_str!("../../../notebooks/dotnet.md")),
     ("systemd.md", include_str!("../../../notebooks/systemd.md")),
     ("ssh.md", include_str!("../../../notebooks/ssh.md")),
-    ("powershell.md", include_str!("../../../notebooks/powershell.md")),
+    (
+        "powershell.md",
+        include_str!("../../../notebooks/powershell.md"),
+    ),
     ("linux.md", include_str!("../../../notebooks/linux.md")),
     ("npm.md", include_str!("../../../notebooks/npm.md")),
     ("python.md", include_str!("../../../notebooks/python.md")),
-    ("postgres.md", include_str!("../../../notebooks/postgres.md")),
+    (
+        "postgres.md",
+        include_str!("../../../notebooks/postgres.md"),
+    ),
     ("kubectl.md", include_str!("../../../notebooks/kubectl.md")),
 ];
 
@@ -85,7 +91,12 @@ mod tests {
     fn builtins_have_a_useful_amount_of_content() {
         let total: usize = BUILTIN
             .iter()
-            .map(|(n, c)| crate::notebook::parse(Path::new(n), c).unwrap().entries.len())
+            .map(|(n, c)| {
+                crate::notebook::parse(Path::new(n), c)
+                    .unwrap()
+                    .entries
+                    .len()
+            })
             .sum();
         assert!(total > 300, "内置命令只有 {total} 条，太少了");
     }
@@ -96,7 +107,11 @@ mod tests {
             let nb = crate::notebook::parse(Path::new(name), content).unwrap();
             for e in &nb.entries {
                 assert!(!e.title.trim().is_empty(), "{name} 有条目没标题");
-                assert!(!e.command.trim().is_empty(), "{name} 的「{}」没有命令", e.title);
+                assert!(
+                    !e.command.trim().is_empty(),
+                    "{name} 的「{}」没有命令",
+                    e.title
+                );
             }
         }
     }

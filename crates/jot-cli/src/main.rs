@@ -2,6 +2,7 @@
 //!
 //! 核心约定：jot 只把命令放到你的命令行上，从不替你执行。回车永远由人按。
 
+mod console;
 mod shellinit;
 mod tui;
 
@@ -117,31 +118,55 @@ enum ImportCmd {
     },
 }
 
-fn main() {
-    match run() {
-        Ok(code) => std::process::exit(code),
-        Err(e) => {
-            eprintln!("jot: {e:#}");
-            std::process::exit(1);
-        }
+/// `jot docker 日志` → `jot pick --query "docker 日志"`，省掉记子命令。
+///
+/// 只吞到第一个 flag 为止 —— `jot docker 日志 --first` 里的 `--first` 是选项，
+/// 不是搜索词的一部分。
+fn rewrite_bare_query(args: Vec<String>) -> Vec<String> {
+    let Some(first) = args.get(1) else {
+        return args;
+    };
+    if first.starts_with('-') || SUBCOMMANDS.contains(&first.as_str()) {
+        return args;
     }
+    let split = args[1..]
+        .iter()
+        .position(|a| a.starts_with('-'))
+        .map(|i| i + 1)
+        .unwrap_or(args.len());
+
+    let mut out = vec![args[0].clone(), "pick".into(), "--query".into()];
+    out.push(args[1..split].join(" "));
+    out.extend_from_slice(&args[split..]);
+    out
+}
+
+fn main() {
+    // 作用域刻意收紧：process::exit 不跑析构函数，代码页必须在退出前还原。
+    let code = {
+        // 老 conhost 的代码页可能是 GBK，中文界面会整片乱码
+        let _console = console::Utf8Console::enter();
+        match run() {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("jot: {e:#}");
+                1
+            }
+        }
+    };
+    std::process::exit(code);
 }
 
 fn run() -> Result<i32> {
-    let mut args: Vec<String> = std::env::args().collect();
-    // `jot docker log` → 直接当搜索词，不用记 pick 这个子命令
-    if args.len() > 1 {
-        let first = args[1].clone();
-        if !first.starts_with('-') && !SUBCOMMANDS.contains(&first.as_str()) {
-            let query = args[1..].join(" ");
-            args = vec![args[0].clone(), "pick".into(), "--query".into(), query];
-        }
-    }
-
-    let cli = Cli::parse_from(args);
+    let cli = Cli::parse_from(rewrite_bare_query(std::env::args().collect()));
     match cli.cmd {
         None => cmd_pick("", false, "", false),
-        Some(Cmd::Pick { query, widget, line, first }) => cmd_pick(&query, widget, &line, first),
+        Some(Cmd::Pick {
+            query,
+            widget,
+            line,
+            first,
+        }) => cmd_pick(&query, widget, &line, first),
         Some(Cmd::Save { command, notebook }) => cmd_save(command, notebook),
         Some(Cmd::Ls { notebook }) => cmd_ls(notebook.as_deref()),
         Some(Cmd::Init { shell, key }) => cmd_init(&shell, key.as_deref()),
@@ -163,7 +188,10 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
     let paths = Paths::discover()?;
     let seeded = builtin::seed_if_missing(&paths)?;
     if seeded > 0 && !widget {
-        eprintln!("jot: 已装好 {seeded} 个内置笔记本 → {}", paths.builtin_dir().display());
+        eprintln!(
+            "jot: 已装好 {seeded} 个内置笔记本 → {}",
+            paths.builtin_dir().display()
+        );
     }
 
     let lib = Library::load(&paths)?;
@@ -211,9 +239,11 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
         let context = vars::render(&entry.command, &values);
         let got = match plan {
             Ask::Resolved(v) => Some(v),
-            Ask::Choose { label, options, default } => {
-                ui.ask_choice(&context, &label, &options, default.as_deref())?
-            }
+            Ask::Choose {
+                label,
+                options,
+                default,
+            } => ui.ask_choice(&context, &label, &options, default.as_deref())?,
             Ask::Text { label, default } => ui.ask_text(&context, &label, default.as_deref())?,
         };
         match got {
@@ -302,6 +332,9 @@ fn cmd_pick_first(
         );
     }
 
+    if entry.confirm {
+        eprintln!("jot: ⚠ 「{}」被标记为危险命令，确认后再执行", entry.title);
+    }
     println!("{}", vars::render(&entry.command, &values));
     eprintln!("jot: {} / {}", entry.notebook, entry.title);
     Ok(0)
@@ -322,7 +355,11 @@ fn emit(cmd: &str, widget: bool, entry: &Entry, paths: &Paths, mut cfg: Config) 
     }
     // 只在最初几次提示装 shell 集成，之后闭嘴。写配置也只发生在这几次。
     if cfg.hints_shown < jot_core::config::HINT_LIMIT {
-        let shell = if cfg!(target_os = "windows") { "powershell" } else { "bash" };
+        let shell = if cfg!(target_os = "windows") {
+            "powershell"
+        } else {
+            "bash"
+        };
         eprintln!("jot: 装上 shell 集成就能直接填进命令行 → jot init {shell}");
         cfg.hints_shown += 1;
         let _ = cfg.save(paths);
@@ -415,7 +452,9 @@ fn cmd_import_history(top: usize) -> Result<i32> {
     let picked = ui.multi_select("从 shell 历史导入（按使用频次排序）", &rows)?;
     drop(ui);
 
-    let Some(picked) = picked else { return Ok(EXIT_CANCEL) };
+    let Some(picked) = picked else {
+        return Ok(EXIT_CANCEL);
+    };
     if picked.is_empty() {
         eprintln!("jot: 没有选中任何命令");
         return Ok(0);
@@ -435,7 +474,10 @@ fn cmd_import_history(top: usize) -> Result<i32> {
         )?;
         n += 1;
     }
-    eprintln!("jot: 导入了 {n} 条 → {}", builtin::ensure_personal_notebook(&paths)?.display());
+    eprintln!(
+        "jot: 导入了 {n} 条 → {}",
+        builtin::ensure_personal_notebook(&paths)?.display()
+    );
     eprintln!("jot: 建议现在跑一次 `jot edit my` 把标题改成你看得懂的话");
     Ok(0)
 }
@@ -456,7 +498,12 @@ fn cmd_ls(notebook: Option<&str>) -> Result<i32> {
         if visible.is_empty() {
             continue;
         }
-        println!("\n# {}  ({} 条)  {}", nb.name, visible.len(), nb.description);
+        println!(
+            "\n# {}  ({} 条)  {}",
+            nb.name,
+            visible.len(),
+            nb.description
+        );
         for e in visible {
             println!("  {:<40} {}", e.title, vars::preview(&e.command));
         }
@@ -470,7 +517,10 @@ fn cmd_init(shell: &str, key: Option<&str>) -> Result<i32> {
             print!("{s}");
             Ok(0)
         }
-        None => bail!("不认识的 shell «{shell}»，支持：{}", shellinit::SHELLS.join(" / ")),
+        None => bail!(
+            "不认识的 shell «{shell}»，支持：{}",
+            shellinit::SHELLS.join(" / ")
+        ),
     }
 }
 
@@ -594,7 +644,10 @@ fn cmd_doctor() -> Result<i32> {
     );
     println!("加载耗时        {:.1} ms", lib.load_ms);
     println!("当前 Profile    {}", cfg.profile_name());
-    println!("Profile 变量    {} 个", profiles.entries(cfg.profile_name()).len());
+    println!(
+        "Profile 变量    {} 个",
+        profiles.entries(cfg.profile_name()).len()
+    );
 
     let hist = capture::history_files();
     if hist.is_empty() {
@@ -641,4 +694,57 @@ fn open_editor(path: &Path) -> Result<()> {
     };
     status.with_context(|| format!("打不开 {}，设置 $EDITOR 再试", path.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rewrite_bare_query;
+
+    fn rw(args: &[&str]) -> Vec<String> {
+        rewrite_bare_query(
+            std::iter::once("jot")
+                .chain(args.iter().copied())
+                .map(String::from)
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn bare_words_become_a_query() {
+        assert_eq!(
+            rw(&["docker", "日志"]),
+            ["jot", "pick", "--query", "docker 日志"]
+        );
+    }
+
+    /// 回归：flag 曾经被一起吞进搜索词，导致 `jot docker --first` 不工作。
+    #[test]
+    fn flags_after_a_bare_query_stay_flags() {
+        assert_eq!(
+            rw(&["docker", "日志", "--first"]),
+            ["jot", "pick", "--query", "docker 日志", "--first"]
+        );
+        assert_eq!(
+            rw(&["git", "--first", "撤销"]),
+            ["jot", "pick", "--query", "git", "--first", "撤销"]
+        );
+    }
+
+    #[test]
+    fn real_subcommands_are_left_alone() {
+        for sub in ["save", "ls", "doctor", "init", "profile"] {
+            assert_eq!(rw(&[sub])[1], sub, "子命令 {sub} 被当成搜索词了");
+        }
+    }
+
+    #[test]
+    fn leading_flags_are_left_alone() {
+        assert_eq!(rw(&["--version"]), ["jot", "--version"]);
+        assert_eq!(rw(&["--help"]), ["jot", "--help"]);
+    }
+
+    #[test]
+    fn no_args_is_untouched() {
+        assert_eq!(rw(&[]), ["jot"]);
+    }
 }

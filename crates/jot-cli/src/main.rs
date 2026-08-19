@@ -744,7 +744,7 @@ fn cmd_sources() -> Result<i32> {
             } else {
                 "未授信"
             },
-            src.url.unwrap_or_default()
+            src.remote_url().unwrap_or_default()
         );
     }
     Ok(0)

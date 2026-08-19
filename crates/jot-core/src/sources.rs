@@ -16,8 +16,23 @@ use std::process::Command;
 pub struct Source {
     pub name: String,
     pub path: PathBuf,
-    pub url: Option<String>,
     pub trusted: bool,
+}
+
+impl Source {
+    /// 远端地址。**按需**调用 —— 每次要 spawn 一个 git 子进程（Windows 上约 45ms），
+    /// 绝不能出现在加载路径上，那会直接炸穿冷启动预算（D-10）。
+    pub fn remote_url(&self) -> Option<String> {
+        git(&[
+            "-C",
+            &self.path.to_string_lossy(),
+            "remote",
+            "get-url",
+            "origin",
+        ])
+        .ok()
+        .map(|s| s.trim().to_string())
+    }
 }
 
 /// 从 git URL 猜一个目录名：最后一段去掉 .git。
@@ -70,7 +85,7 @@ fn git(args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// 已装的全部源。
+/// 已装的全部源。**只读目录，不碰 git** —— 这个函数在每次加载时都会被调用。
 pub fn list(paths: &Paths, trusted: &[String]) -> Vec<Source> {
     let dir = paths.sources_dir();
     let Ok(rd) = std::fs::read_dir(&dir) else {
@@ -85,14 +100,10 @@ pub fn list(paths: &Paths, trusted: &[String]) -> Vec<Source> {
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let url = git(&["-C", &path.to_string_lossy(), "remote", "get-url", "origin"])
-                .ok()
-                .map(|s| s.trim().to_string());
             let trusted = trusted.contains(&name);
             Source {
                 name,
                 path,
-                url,
                 trusted,
             }
         })
@@ -118,7 +129,6 @@ pub fn add(paths: &Paths, spec: &str, name_override: Option<&str>) -> Result<Sou
     Ok(Source {
         name,
         path: dest,
-        url: Some(url),
         trusted: false,
     })
 }

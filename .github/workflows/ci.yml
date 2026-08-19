@@ -66,4 +66,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # 笔记本的校验测试不需要剪贴板，只跑 core 就够，PR 反馈更快
       - name: Validate every builtin notebook
-        run: cargo test -p jot-core builtin::
+        run: "cargo test -p jot-core builtin::"

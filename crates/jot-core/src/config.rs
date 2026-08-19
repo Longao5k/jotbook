@@ -44,6 +44,9 @@ impl Paths {
     pub fn profiles_file(&self) -> PathBuf {
         self.root.join("profiles.toml")
     }
+    pub fn usage_file(&self) -> PathBuf {
+        self.root.join("usage.toml")
+    }
 
     pub fn notebook_dirs(&self) -> Vec<PathBuf> {
         let mut v = vec![self.builtin_dir(), self.local_dir()];

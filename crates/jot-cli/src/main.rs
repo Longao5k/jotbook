@@ -13,7 +13,7 @@ use jot_core::capture;
 use jot_core::notebook::Entry;
 use jot_core::resolve::{self, Ask};
 use jot_core::vars;
-use jot_core::{Config, Library, Paths, Profiles};
+use jot_core::{Config, Library, Paths, Profiles, Usage};
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
@@ -197,6 +197,7 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
     let lib = Library::load(&paths)?;
     let cfg = Config::load(&paths);
     let profiles = Profiles::load(&paths);
+    let mut usage = Usage::load(&paths);
     let entries = lib.entries();
     if entries.is_empty() {
         bail!("一条命令都没有。检查 {}", paths.notebooks().display());
@@ -205,11 +206,19 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
     let initial = if !query.is_empty() { query } else { line };
 
     if first {
-        return cmd_pick_first(&lib, &entries, initial, &profiles, cfg.profile_name());
+        return cmd_pick_first(
+            &lib,
+            &entries,
+            initial,
+            &profiles,
+            cfg.profile_name(),
+            &mut usage,
+            &paths,
+        );
     }
 
     let mut ui = Ui::new()?;
-    let idx = match ui.pick(&entries, initial)? {
+    let idx = match ui.pick(&entries, initial, &usage)? {
         Picked::Cancel => {
             drop(ui);
             return Ok(EXIT_CANCEL);
@@ -264,6 +273,10 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
     }
     drop(ui);
 
+    // 用过就记一笔，下次它会自动往前排
+    usage.record(&entry.id());
+    let _ = usage.save(&paths);
+
     emit(&final_cmd, widget, entry, &paths, cfg);
     Ok(0)
 }
@@ -276,6 +289,8 @@ fn cmd_pick_first(
     query: &str,
     profiles: &Profiles,
     profile: &str,
+    usage: &mut Usage,
+    paths: &Paths,
 ) -> Result<i32> {
     use fuzzy_matcher::skim::SkimMatcherV2;
     use fuzzy_matcher::FuzzyMatcher;
@@ -335,6 +350,9 @@ fn cmd_pick_first(
     if entry.confirm {
         eprintln!("jot: ⚠ 「{}」被标记为危险命令，确认后再执行", entry.title);
     }
+    usage.record(&entry.id());
+    let _ = usage.save(paths);
+
     println!("{}", vars::render(&entry.command, &values));
     eprintln!("jot: {} / {}", entry.notebook, entry.title);
     Ok(0)
@@ -648,6 +666,16 @@ fn cmd_doctor() -> Result<i32> {
         "Profile 变量    {} 个",
         profiles.entries(cfg.profile_name()).len()
     );
+
+    let usage = jot_core::Usage::load(&paths);
+    println!("累计使用        {} 次", usage.total_uses());
+    let top = usage.top(5);
+    if !top.is_empty() {
+        println!("最常用");
+        for (id, stat) in top {
+            println!("  {:>4}×  {id}", stat.count);
+        }
+    }
 
     let hist = capture::history_files();
     if hist.is_empty() {

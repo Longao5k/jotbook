@@ -63,6 +63,11 @@ impl Entry {
         self.platforms.is_empty() || self.platforms.iter().any(|p| p == plat)
     }
 
+    /// 跨会话稳定的标识，用于记使用频次。
+    pub fn id(&self) -> String {
+        format!("{}/{}", self.notebook, self.title)
+    }
+
     /// 参与模糊匹配的文本。
     pub fn haystack(&self) -> String {
         format!(

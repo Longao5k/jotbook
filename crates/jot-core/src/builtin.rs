@@ -7,28 +7,40 @@
 use crate::config::{Config, Paths};
 use anyhow::Result;
 
-pub const BUILTIN_VERSION: &str = "0.1.0";
+/// 内置笔记本内容有变就要改这个版本号，否则老用户不会拿到新内容。
+pub const BUILTIN_VERSION: &str = "0.2.0";
 
-pub const BUILTIN: &[(&str, &str)] = &[
-    ("jot.md", include_str!("../../../notebooks/jot.md")),
-    ("git.md", include_str!("../../../notebooks/git.md")),
-    ("docker.md", include_str!("../../../notebooks/docker.md")),
-    ("flutter.md", include_str!("../../../notebooks/flutter.md")),
-    ("dotnet.md", include_str!("../../../notebooks/dotnet.md")),
-    ("systemd.md", include_str!("../../../notebooks/systemd.md")),
-    ("ssh.md", include_str!("../../../notebooks/ssh.md")),
-    (
-        "powershell.md",
-        include_str!("../../../notebooks/powershell.md"),
-    ),
-    ("linux.md", include_str!("../../../notebooks/linux.md")),
-    ("npm.md", include_str!("../../../notebooks/npm.md")),
-    ("python.md", include_str!("../../../notebooks/python.md")),
-    (
-        "postgres.md",
-        include_str!("../../../notebooks/postgres.md"),
-    ),
-    ("kubectl.md", include_str!("../../../notebooks/kubectl.md")),
+/// 加一本笔记本 = 在下面加一行文件名。
+macro_rules! notebooks {
+    ($($name:literal),* $(,)?) => {
+        &[$( ($name, include_str!(concat!("../../../notebooks/", $name))) ),*]
+    };
+}
+
+pub const BUILTIN: &[(&str, &str)] = notebooks![
+    "jot.md",
+    // 通用
+    "git.md",
+    "linux.md",
+    "macos.md",
+    "powershell.md",
+    "ssh.md",
+    "tmux.md",
+    // 运行时与包管理
+    "docker.md",
+    "kubectl.md",
+    "nginx.md",
+    "systemd.md",
+    // 语言与框架
+    "dotnet.md",
+    "flutter.md",
+    "npm.md",
+    "python.md",
+    // 数据库
+    "mssql.md",
+    "mysql.md",
+    "postgres.md",
+    "redis.md",
 ];
 
 /// 需要时把内置笔记本写到磁盘。返回写了几个。
@@ -98,7 +110,7 @@ mod tests {
                     .len()
             })
             .sum();
-        assert!(total > 300, "内置命令只有 {total} 条，太少了");
+        assert!(total > 600, "内置命令只有 {total} 条，太少了");
     }
 
     #[test]

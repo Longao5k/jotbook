@@ -7,10 +7,12 @@ pub mod capture;
 pub mod config;
 pub mod notebook;
 pub mod resolve;
+pub mod usage;
 pub mod vars;
 
 pub use config::{Config, Paths, Profiles};
 pub use notebook::{Entry, Notebook, VarDecl};
+pub use usage::Usage;
 pub use vars::{Seg, VarRef};
 
 use anyhow::Result;

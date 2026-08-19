@@ -8,6 +8,7 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use jot_core::notebook::Entry;
 use jot_core::resolve::Choice;
+use jot_core::Usage;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
@@ -83,9 +84,12 @@ fn clamp_line(s: &str, max: usize) -> String {
 
 impl Ui {
     /// 主选择器。
-    pub fn pick(&mut self, entries: &[&Entry], initial: &str) -> Result<Picked> {
+    pub fn pick(&mut self, entries: &[&Entry], initial: &str, usage: &Usage) -> Result<Picked> {
         let matcher = SkimMatcherV2::default().ignore_case();
         let hays: Vec<String> = entries.iter().map(|e| e.haystack()).collect();
+        // 常用度加权预先算好，每次按键都要用
+        let now = jot_core::usage::now_secs();
+        let boosts: Vec<i64> = entries.iter().map(|e| usage.boost(&e.id(), now)).collect();
 
         let mut query = initial.to_string();
         let mut cursor = 0usize;
@@ -96,11 +100,11 @@ impl Ui {
             let mut hits: Vec<(usize, i64)> = entries
                 .iter()
                 .enumerate()
-                .filter_map(|(i, _)| score(&matcher, &hays[i], &query).map(|s| (i, s)))
+                .filter_map(|(i, _)| score(&matcher, &hays[i], &query).map(|s| (i, s + boosts[i])))
                 .collect();
-            if !query.is_empty() {
-                hits.sort_by_key(|h| std::cmp::Reverse(h.1));
-            }
+            // 总是排序：搜索词为空时这就退化成「按常用度排」，
+            // 分数相同的靠 sort_by_key 的稳定性保持原有文件顺序
+            hits.sort_by_key(|h| std::cmp::Reverse(h.1));
             if cursor >= hits.len() {
                 cursor = hits.len().saturating_sub(1);
             }

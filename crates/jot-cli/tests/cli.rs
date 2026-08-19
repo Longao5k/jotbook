@@ -288,3 +288,63 @@ fn local_notebooks_shadow_nothing_and_both_load() {
     assert!(o.status.success(), "{}", stderr(&o));
     assert_eq!(stdout(&o).trim(), "git switch feature/x");
 }
+
+#[test]
+fn usage_is_recorded_and_ranks_entries() {
+    let home = temp_home("usage");
+    let usage_file = home.join("usage.toml");
+    assert!(!usage_file.exists(), "还没用过就有统计文件");
+
+    for _ in 0..3 {
+        let o = jot(&home, &["pick", "-q", "撤销最后一次提交 保留", "--first"]);
+        assert!(o.status.success(), "{}", stderr(&o));
+    }
+
+    let recorded = std::fs::read_to_string(&usage_file).expect("没生成 usage.toml");
+    assert!(
+        recorded.contains("git/撤销最后一次提交，但保留改动"),
+        "条目没被记下来：{recorded}"
+    );
+    assert!(recorded.contains("count = 3"), "次数不对：{recorded}");
+
+    // doctor 应该把它列为最常用
+    let d = stdout(&jot(&home, &["doctor"]));
+    assert!(d.contains("累计使用        3 次"), "doctor 没统计到：{d}");
+    assert!(d.contains("最常用"), "doctor 没显示最常用列表");
+}
+
+#[test]
+fn usage_file_corruption_does_not_break_the_tool() {
+    let home = temp_home("badusage");
+    jot(&home, &["doctor"]);
+    std::fs::write(home.join("usage.toml"), "这不是合法的 TOML {{{").unwrap();
+
+    let o = jot(&home, &["pick", "-q", "撤销最后一次提交 保留", "--first"]);
+    assert!(
+        o.status.success(),
+        "统计文件损坏导致工具挂了：{}",
+        stderr(&o)
+    );
+    assert_eq!(stdout(&o).trim(), "git reset --soft HEAD~1");
+}
+
+#[test]
+fn a_broken_notebook_does_not_break_the_rest() {
+    let home = temp_home("badnotebook");
+    jot(&home, &["doctor"]);
+    let dir = home.join("notebooks").join("local");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("broken.md"),
+        "---\nname: [unclosed\n---\n\n## x\n\n```sh\nls\n```\n",
+    )
+    .unwrap();
+
+    let o = jot(&home, &["pick", "-q", "撤销最后一次提交 保留", "--first"]);
+    assert!(
+        o.status.success(),
+        "一本笔记本写坏就整个用不了：{}",
+        stderr(&o)
+    );
+    assert!(stderr(&o).contains("跳过"), "没有提示哪本笔记本被跳过了");
+}

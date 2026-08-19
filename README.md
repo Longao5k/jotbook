@@ -35,7 +35,9 @@ That's a **retrieval** problem, not a generation problem. And `sudo systemctl re
 
 ## Features
 
-- **Not empty on day one** — 13 notebooks, 460 commands built in: git, docker, flutter, dotnet, systemd, ssh, powershell, linux, npm, python, postgres, kubectl
+- **Not empty on day one** — 19 notebooks, 630+ commands built in:
+  git · linux · macos · powershell · ssh · tmux · docker · kubectl · nginx · systemd · dotnet · flutter · npm · python · mssql · mysql · postgres · redis
+- **Learns what you use** — frequently and recently used entries float to the top. With an empty search box the list is simply your most-used commands
 - **Variables** — `{{service}}` can come from your profile, from a live command's output, or just ask you
 - **Injects, never executes** — jot puts the command on your prompt and stops there. You press Enter
 - **Plain text** — everything is Markdown. Sync with git, read it on GitHub, edit it in vim
@@ -176,7 +178,8 @@ For a literal `{{name}}`, write `\{{name}}`.
 │   ├── builtin/     shipped with the binary; rewritten on upgrade
 │   └── local/       yours; never touched
 ├── config.toml      active profile
-└── profiles.toml    your environment's constants — not for secrets
+├── profiles.toml    your environment's constants — not for secrets
+└── usage.toml       how often you use each entry, for ranking
 ```
 
 `notebooks/` is a plain directory — `git init` it and you have sync, history, and sharing. `profiles.toml` deliberately sits outside it.

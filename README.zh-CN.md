@@ -35,7 +35,9 @@ $ docker logs -f --tail 200 kestrel-api▏
 
 ## 特点
 
-- **开箱不是空的** —— 内置 13 个笔记本、460 条命令：git、docker、flutter、dotnet、systemd、ssh、powershell、linux、npm、python、postgres、kubectl
+- **开箱不是空的** —— 内置 19 个笔记本、630+ 条命令：
+  git · linux · macos · powershell · ssh · tmux · docker · kubectl · nginx · systemd · dotnet · flutter · npm · python · mssql · mysql · postgres · redis
+- **越用越顺手** —— 常用和最近用过的条目自动往上浮。搜索框空着时，列表就是你最常用的那几条
 - **变量** —— `{{service}}` 可以来自你的 Profile、来自一条实时命令的输出，或者每次问你
 - **只注入，不执行** —— jot 把命令放到你的命令行上就结束了，回车永远由人按
 - **纯文本** —— 全是 Markdown 文件，用 git 同步、在 GitHub 上直接看、拿 vim 改都行
@@ -176,7 +178,8 @@ sudo systemctl restart {{service}}                  # 这个才是变量
 │   ├── builtin/     随二进制发布，升级时会被重写
 │   └── local/       你自己的，永远不会被动
 ├── config.toml      当前 Profile
-└── profiles.toml    你环境里的常量 —— 不要放密钥
+├── profiles.toml    你环境里的常量 —— 不要放密钥
+└── usage.toml       各条目的使用次数，用来排序
 ```
 
 `notebooks/` 就是个普通目录，`git init` 一下就有了同步、历史和分享。`profiles.toml` 刻意留在外面。

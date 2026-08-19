@@ -15,6 +15,9 @@ clap = { version = "4", features = ["derive"] }
 ratatui = "0.29"
 fuzzy-matcher = "0.3"
 arboard = { version = "3", default-features = false }
+# 截断要按终端列数算，不是字符数 —— 中文一个字占两列
+unicode-width = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.60", features = ["Win32_System_Console"] }
+

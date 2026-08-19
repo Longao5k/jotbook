@@ -423,6 +423,7 @@ dependencies = [
  "fuzzy-matcher",
  "jot-core",
  "ratatui",
+ "unicode-width 0.2.0",
  "windows-sys 0.60.2",
 ]
 

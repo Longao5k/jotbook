@@ -18,7 +18,7 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{backend::CrosstermBackend, Frame, Terminal};
 use std::io::Stderr;
 
 const ACCENT: Color = Color::Cyan;
@@ -72,14 +72,138 @@ fn score(matcher: &SkimMatcherV2, hay: &str, needle: &str) -> Option<i64> {
     Some(total)
 }
 
+/// 按**终端列数**截断，不是字符数。
+///
+/// 中文一个字占两列。用 `chars().count()` 的话中文标题根本不会触发省略号，
+/// 而是被终端直接切掉 —— 行尾的笔记本名和 ⚠ 标记会一起消失。内置笔记本
+/// 全是中文标题，所以这条一定会踩到。
 fn clamp_line(s: &str, max: usize) -> String {
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
     let s = s.replace('\n', " ⏎ ");
-    if s.chars().count() <= max {
+    if s.width() <= max {
         return s;
     }
-    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    // 留一列给省略号
+    let budget = max.saturating_sub(1);
+    let mut out = String::new();
+    let mut used = 0usize;
+    for c in s.chars() {
+        let w = c.width().unwrap_or(0);
+        if used + w > budget {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
     out.push('…');
     out
+}
+
+/// 主选择器的渲染。抽成自由函数是为了能用 ratatui 的 TestBackend 离线断言 ——
+/// 交互没法在测试里驱动，但「画出来对不对、窄终端会不会 panic」可以。
+pub(crate) fn draw_picker(
+    f: &mut Frame,
+    entries: &[&Entry],
+    hits: &[(usize, i64)],
+    query: &str,
+    state: &mut ListState,
+) {
+    let sel_entry = state
+        .selected()
+        .and_then(|c| hits.get(c))
+        .map(|(i, _)| entries[*i]);
+    let area = f.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(4),
+            Constraint::Length(5),
+        ])
+        .split(area);
+
+    // ── 搜索框 ──
+    let title = format!(" jot  {}/{} ", hits.len(), entries.len());
+    let search = Paragraph::new(Line::from(vec![
+        Span::styled("› ", Style::default().fg(ACCENT)),
+        Span::raw(query),
+        Span::styled("▏", Style::default().fg(ACCENT)),
+    ]))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(DIM))
+            .title(Span::styled(
+                title,
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            )),
+    );
+    f.render_widget(search, chunks[0]);
+
+    // ── 结果列表 ──
+    let width = chunks[1].width.saturating_sub(4) as usize;
+    let items: Vec<ListItem> = hits
+        .iter()
+        .map(|(i, _)| {
+            let e = entries[*i];
+            let mut head = vec![Span::styled(
+                clamp_line(&e.title, width.saturating_sub(14)),
+                Style::default().add_modifier(Modifier::BOLD),
+            )];
+            if e.confirm {
+                head.push(Span::styled(" ⚠", Style::default().fg(WARN)));
+            }
+            head.push(Span::styled(
+                format!("  {}", e.notebook),
+                Style::default().fg(DIM),
+            ));
+            ListItem::new(vec![
+                Line::from(head),
+                Line::from(Span::styled(
+                    format!(
+                        "  {}",
+                        clamp_line(&jot_core::vars::preview(&e.command), width)
+                    ),
+                    Style::default().fg(Color::Gray),
+                )),
+            ])
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::NONE))
+        .highlight_style(Style::default().bg(Color::Rgb(30, 60, 62)))
+        .highlight_symbol("❯ ");
+    f.render_stateful_widget(list, chunks[1], state);
+
+    // ── 详情 + 帮助 ──
+    let mut detail: Vec<Line> = Vec::new();
+    if let Some(e) = sel_entry {
+        if !e.description.is_empty() {
+            detail.push(Line::from(Span::styled(
+                e.description.clone(),
+                Style::default().fg(Color::Gray),
+            )));
+        }
+        if e.confirm {
+            detail.push(Line::from(Span::styled(
+                "⚠ 危险命令，使用前会再确认一次",
+                Style::default().fg(WARN),
+            )));
+        }
+    }
+    detail.push(Line::from(Span::styled(
+        "↑↓ 选择   ⏎ 使用   ^E 打开文件   esc 取消",
+        Style::default().fg(DIM),
+    )));
+
+    let help = Paragraph::new(detail).wrap(Wrap { trim: true }).block(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(DIM)),
+    );
+    f.render_widget(help, chunks[2]);
 }
 
 impl Ui {
@@ -110,102 +234,8 @@ impl Ui {
             }
             state.select(if hits.is_empty() { None } else { Some(cursor) });
 
-            let sel_entry = hits.get(cursor).map(|(i, _)| entries[*i]);
-
-            self.term.draw(|f| {
-                let area = f.area();
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(3),
-                        Constraint::Min(4),
-                        Constraint::Length(5),
-                    ])
-                    .split(area);
-
-                // ── 搜索框 ──
-                let title = format!(" jot  {}/{} ", hits.len(), entries.len());
-                let search = Paragraph::new(Line::from(vec![
-                    Span::styled("› ", Style::default().fg(ACCENT)),
-                    Span::raw(&query),
-                    Span::styled("▏", Style::default().fg(ACCENT)),
-                ]))
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(DIM))
-                        .title(Span::styled(
-                            title,
-                            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-                        )),
-                );
-                f.render_widget(search, chunks[0]);
-
-                // ── 结果列表 ──
-                let width = chunks[1].width.saturating_sub(4) as usize;
-                let items: Vec<ListItem> = hits
-                    .iter()
-                    .map(|(i, _)| {
-                        let e = entries[*i];
-                        let mut head = vec![Span::styled(
-                            clamp_line(&e.title, width.saturating_sub(14)),
-                            Style::default().add_modifier(Modifier::BOLD),
-                        )];
-                        if e.confirm {
-                            head.push(Span::styled(" ⚠", Style::default().fg(WARN)));
-                        }
-                        head.push(Span::styled(
-                            format!("  {}", e.notebook),
-                            Style::default().fg(DIM),
-                        ));
-                        ListItem::new(vec![
-                            Line::from(head),
-                            Line::from(Span::styled(
-                                format!(
-                                    "  {}",
-                                    clamp_line(&jot_core::vars::preview(&e.command), width)
-                                ),
-                                Style::default().fg(Color::Gray),
-                            )),
-                        ])
-                    })
-                    .collect();
-
-                let list = List::new(items)
-                    .block(Block::default().borders(Borders::NONE))
-                    .highlight_style(Style::default().bg(Color::Rgb(30, 60, 62)))
-                    .highlight_symbol("❯ ");
-                f.render_stateful_widget(list, chunks[1], &mut state);
-
-                // ── 详情 + 帮助 ──
-                let mut detail: Vec<Line> = Vec::new();
-                if let Some(e) = sel_entry {
-                    if !e.description.is_empty() {
-                        detail.push(Line::from(Span::styled(
-                            e.description.clone(),
-                            Style::default().fg(Color::Gray),
-                        )));
-                    }
-                    if e.confirm {
-                        detail.push(Line::from(Span::styled(
-                            "⚠ 危险命令，使用前会再确认一次",
-                            Style::default().fg(WARN),
-                        )));
-                    }
-                }
-                detail.push(Line::from(Span::styled(
-                    "↑↓ 选择   ⏎ 使用   ^E 打开文件   esc 取消",
-                    Style::default().fg(DIM),
-                )));
-
-                let help = Paragraph::new(detail).wrap(Wrap { trim: true }).block(
-                    Block::default()
-                        .borders(Borders::TOP)
-                        .border_style(Style::default().fg(DIM)),
-                );
-                f.render_widget(help, chunks[2]);
-            })?;
-
+            self.term
+                .draw(|f| draw_picker(f, entries, &hits, &query, &mut state))?;
             let Event::Key(k) = event::read()? else {
                 continue;
             };
@@ -666,5 +696,175 @@ impl Ui {
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jot_core::notebook;
+    use ratatui::backend::TestBackend;
+    use std::path::Path;
+
+    const SRC: &str = "---\nname: demo\n---\n\n\
+## 重启后端服务\n\n\
+改完配置必须重启。\n\n\
+```sh @confirm\nsudo systemctl restart {{service}}\n```\n\n\
+## 查看日志\n\n\
+```sh\njournalctl -f\n```\n";
+
+    fn entries() -> Vec<notebook::Entry> {
+        notebook::parse(Path::new("demo.md"), SRC).unwrap().entries
+    }
+
+    /// 把渲染出来的缓冲区导成纯文本，方便断言。
+    ///
+    /// CJK 是双宽字符，ratatui 用两个单元格存一个字 —— 必须按显示宽度推进，
+    /// 否则导出来是「重 启 后 端」这种带空格的东西。
+    fn render(w: u16, h: u16, query: &str, n_hits: usize, selected: Option<usize>) -> String {
+        render_entries(&entries(), w, h, query, n_hits, selected)
+    }
+
+    fn render_entries(
+        owned: &[notebook::Entry],
+        w: u16,
+        h: u16,
+        query: &str,
+        n_hits: usize,
+        selected: Option<usize>,
+    ) -> String {
+        use unicode_width::UnicodeWidthStr;
+
+        let refs: Vec<&Entry> = owned.iter().collect();
+        let hits: Vec<(usize, i64)> = (0..n_hits.min(refs.len())).map(|i| (i, 0)).collect();
+        let mut state = ListState::default();
+        state.select(selected);
+
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| draw_picker(f, &refs, &hits, query, &mut state))
+            .unwrap();
+
+        let buf = term.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buf.area.height {
+            let mut x = 0u16;
+            while x < buf.area.width {
+                let sym = buf[(x, y)].symbol();
+                out.push_str(sym);
+                x += (UnicodeWidthStr::width(sym).max(1)) as u16;
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    /// 回归：截断曾经按字符数算，中文标题因此从不触发省略号，
+    /// 而是被终端直接切掉，行尾的笔记本名和 ⚠ 一起消失。
+    #[test]
+    fn clamp_measures_columns_not_characters() {
+        use unicode_width::UnicodeWidthStr;
+
+        let cjk = "重启后端服务的那条命令"; // 11 字 = 22 列
+        assert_eq!(cjk.width(), 22);
+        assert_eq!(clamp_line(cjk, 30), cjk, "够宽的时候不该截断");
+
+        let cut = clamp_line(cjk, 10);
+        assert!(cut.ends_with('…'), "没有省略号: {cut}");
+        assert!(
+            cut.width() <= 10,
+            "截断后仍然占了 {} 列: {cut}",
+            cut.width()
+        );
+
+        // 纯 ASCII 的行为不变
+        assert_eq!(clamp_line("abcdefghij", 5), "abcd…");
+        assert_eq!(clamp_line("abc", 5), "abc");
+    }
+
+    #[test]
+    fn draws_query_titles_and_counts() {
+        let s = render(80, 24, "重启", 2, Some(0));
+        assert!(s.contains("重启"), "搜索词没画出来:\n{s}");
+        assert!(s.contains("重启后端服务"), "条目标题没画出来:\n{s}");
+        assert!(s.contains("2/2"), "计数不对:\n{s}");
+        assert!(s.contains("demo"), "笔记本名没画出来:\n{s}");
+    }
+
+    #[test]
+    fn variables_render_as_readable_placeholders() {
+        let s = render(80, 24, "", 2, Some(0));
+        assert!(s.contains("⟨service⟩"), "变量没换成可读占位符:\n{s}");
+        assert!(!s.contains("{{service}}"), "列表里直接显示了花括号:\n{s}");
+    }
+
+    #[test]
+    fn dangerous_entries_are_marked() {
+        let s = render(80, 24, "", 2, Some(0));
+        assert!(s.contains('⚠'), "危险命令没有标记:\n{s}");
+        assert!(s.contains("危险命令"), "详情区没有提示:\n{s}");
+    }
+
+    #[test]
+    fn selection_marker_follows_the_cursor() {
+        assert!(render(80, 24, "", 2, Some(0)).contains('❯'));
+        let second = render(80, 24, "", 2, Some(1));
+        let line = second
+            .lines()
+            .find(|l| l.contains('❯'))
+            .expect("没有选中标记");
+        assert!(line.contains("查看日志"), "选中标记停在了错误的行: {line}");
+    }
+
+    /// 窄终端和极端尺寸是 TUI 最常见的 panic 来源。
+    #[test]
+    fn extreme_terminal_sizes_do_not_panic() {
+        for (w, h) in [
+            (80, 24),
+            (200, 60),
+            (40, 12),
+            (24, 10),
+            (20, 8),
+            (12, 6),
+            (8, 4),
+            (4, 3),
+            (1, 1),
+        ] {
+            let _ = render(w, h, "重启", 2, Some(0));
+            let _ = render(w, h, "", 2, None);
+        }
+    }
+
+    #[test]
+    fn empty_result_set_does_not_panic() {
+        let s = render(80, 24, "没有任何东西能匹配这一串", 0, None);
+        assert!(s.contains("0/2"), "空结果的计数不对:\n{s}");
+    }
+
+    #[test]
+    fn long_content_is_truncated_with_an_ellipsis() {
+        // 窄终端下超长的标题和命令必须被截断，而不是把布局撑破
+        let src = "---
+name: demo
+---
+
+## 一个特别特别特别特别特别特别特别特别长的标题用来验证截断
+
+```sh
+echo 这是一条同样特别特别特别特别特别特别长的命令内容 {{var}}
+```
+";
+        let owned = notebook::parse(Path::new("demo.md"), src).unwrap().entries;
+        let s = render_entries(&owned, 40, 20, "", 1, Some(0));
+        assert!(
+            s.contains('…'),
+            "窄终端下内容没有被截断:
+{s}"
+        );
+        assert_eq!(
+            s.lines().count(),
+            20,
+            "渲染出来的行数和终端高度对不上:
+{s}"
+        );
     }
 }

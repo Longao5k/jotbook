@@ -294,7 +294,7 @@ figcaption{
     <span><b>栈</b> Rust 1.97 · MSVC</span>
     <span><b>后端</b> 无</span>
     <span><b>内置</b> 19 本 · 632 条</span>
-    <span><b>测试</b> 85</span>
+    <span><b>测试</b> 94</span>
     <span><b>冷启动</b> 38ms</span>
   </div>
 </header>
@@ -852,7 +852,7 @@ zle -N __jot_widget; bindkey <span class="s">'^G'</span> __jot_widget</pre>
       <tbody>
         <tr><td>Wayland 禁止合成输入</td><td><span class="chip hi">高</span></td><td>README 明写不支持；自动降级剪贴板；<code>ydotool</code> 作为可选后端</td></tr>
         <tr><td>杀软 / EDR 拦截键盘模拟</td><td><span class="chip hi">高</span></td><td>注入通道可完全关闭；优先试 <code>WriteConsoleInput</code>；发布签名版本</td></tr>
-        <tr><td>冷启动超过 50ms</td><td><span class="chip hi">高</span></td><td>索引缓存 + widget 路径零网络 IO；CI 里加启动耗时回归测试</td></tr>
+        <tr><td>冷启动超过 50ms</td><td><span class="chip hi">高</span></td><td><b>已发生过一次</b>：社区源功能让加载路径每个源 spawn 一次 git，3ms → 139ms。已加回归守卫（<code>load_budget.rs</code>），并反向验证过它真的会变红</td></tr>
         <tr><td>数据格式过早锁定</td><td><span class="chip md">中</span></td><td><code>spec_version</code> 从 v1 就写；M0 只自用，跑一个月再公开</td></tr>
         <tr><td>macOS 辅助功能权限静默失效</td><td><span class="chip md">中</span></td><td>启动自检 + 引导页；失效时降级而不是报错</td></tr>
         <tr><td>维护负债压垮项目</td><td><span class="chip hi">高</span></td><td>§1「不做」清单写进 README；notebooks 与 client 分仓，把高频低风险的贡献引流到前者</td></tr>

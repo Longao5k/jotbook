@@ -23,19 +23,51 @@ function Invoke-JotWidget {{
     $line = $null
     $cursor = $null
     [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+
+    # Windows PowerShell drops empty-string arguments to native executables, so
+    # passing --line "" makes clap see a flag with no value and bail. Only pass
+    # it when there is something to pass; jot defaults it to empty anyway.
+    $jotArgs = @('pick', '--widget')
+    if ($line) {{ $jotArgs += @('--line', $line) }}
+
+    $out = $null
+    $code = $null
+    $failure = $null
     $env:JOT_WIDGET = '1'
     try {{
-        $out = & jot pick --widget --line "$line"
+        $out = & jot @jotArgs 2>&1 | ForEach-Object {{
+            if ($_ -is [System.Management.Automation.ErrorRecord]) {{ $failure = $_ }} else {{ $_ }}
+        }}
         $code = $LASTEXITCODE
+    }} catch {{
+        $failure = $_
     }} finally {{
         Remove-Item Env:\JOT_WIDGET -ErrorAction SilentlyContinue
     }}
+
+    # jot draws on the alternate screen, so PSReadLine's view is stale on return
+    [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
+
     if ($code -eq 0 -and $out) {{
         [Microsoft.PowerShell.PSConsoleReadLine]::RevertLine()
         [Microsoft.PowerShell.PSConsoleReadLine]::Insert(($out -join "`n"))
+        return
+    }}
+    # 130 is a deliberate cancel; anything else is a problem worth seeing.
+    # A key handler that fails silently is impossible to diagnose.
+    if ($code -ne 130) {{
+        $why = if ($failure) {{ "$failure" }} elseif ($null -eq $code) {{ 'jot did not run' }} else {{ "exit $code" }}
+        Write-Host ''
+        Write-Host "jot: widget failed - $why" -ForegroundColor Yellow
+        [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
     }}
 }}
+
 Set-PSReadLineKeyHandler -Chord '{key}' -ScriptBlock {{ Invoke-JotWidget }}
+
+# Ctrl+J is LF and some terminals never deliver it as a distinct key, so bind a
+# second, unambiguous chord as well. Either one opens the picker.
+Set-PSReadLineKeyHandler -Chord 'Alt+j' -ScriptBlock {{ Invoke-JotWidget }}
 "#
     )
 }

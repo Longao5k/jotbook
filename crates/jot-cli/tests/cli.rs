@@ -754,3 +754,51 @@ fn usage_survives_a_language_switch() {
         "the same entry was recorded twice under different ids:\n{after}"
     );
 }
+
+/// Regression: the PowerShell widget used to pass `--line ""`, and Windows
+/// PowerShell drops empty-string arguments to native executables, so clap saw
+/// a flag with no value and exited 2. Pressing the key on an empty prompt
+/// therefore always failed - silently, because the handler swallowed it.
+#[test]
+fn widget_works_without_a_line_argument() {
+    let home = temp_home("widgetnoline");
+    let o = jot(&home, &["pick", "--widget"]);
+
+    // Not a TTY here, so it must fail with the terminal guard - not a usage error
+    assert_ne!(
+        o.status.code(),
+        Some(2),
+        "clap rejected the arguments: {}",
+        stderr(&o)
+    );
+    assert!(
+        stderr(&o).contains("--first"),
+        "expected the terminal guard, got: {}",
+        stderr(&o)
+    );
+}
+
+/// The PowerShell script must never pass an empty --line, and must surface a
+/// failure rather than swallowing it.
+#[test]
+fn powershell_widget_script_is_defensive() {
+    let home = temp_home("psscript");
+    let s = stdout(&jot(&home, &["init", "powershell"]));
+
+    assert!(
+        !s.contains("--line \"$line\""),
+        "still passes --line unconditionally, which breaks on an empty prompt:\n{s}"
+    );
+    assert!(
+        s.contains("if ($line)"),
+        "does not guard against an empty line:\n{s}"
+    );
+    assert!(
+        s.contains("widget failed"),
+        "a failing widget would be silent:\n{s}"
+    );
+    assert!(
+        s.contains("InvokePrompt"),
+        "does not redraw after the alternate screen:\n{s}"
+    );
+}

@@ -62,8 +62,23 @@ pub struct Entry {
 }
 
 impl Entry {
-    pub fn visible_on(&self, plat: &str) -> bool {
+    /// Would this run as-is on `plat`?
+    ///
+    /// Note what this is *not*: a reason to hide the entry. People run Linux
+    /// commands from Windows over ssh and in WSL all the time, and the ssh
+    /// notebook exists precisely to work on other machines. @platform is a
+    /// label and a ranking hint, never a filter.
+    pub fn runs_on(&self, plat: &str) -> bool {
         self.platforms.is_empty() || self.platforms.iter().any(|p| p == plat)
+    }
+
+    /// The platform label to show, or None when it runs anywhere.
+    pub fn platform_label(&self) -> Option<String> {
+        if self.platforms.is_empty() {
+            None
+        } else {
+            Some(self.platforms.join("/"))
+        }
     }
 
     /// A stable identifier across sessions, used to record usage.
@@ -408,11 +423,11 @@ Get-Service
     }
 
     #[test]
-    fn platform_filtering() {
+    fn platform_says_where_a_command_runs() {
         let n = nb();
-        assert!(n.entries[0].visible_on("linux"));
-        assert!(!n.entries[0].visible_on("windows"));
-        assert!(n.entries[1].visible_on("windows"));
+        assert!(n.entries[0].runs_on("linux"));
+        assert!(!n.entries[0].runs_on("windows"));
+        assert!(n.entries[1].runs_on("windows"));
     }
 
     #[test]

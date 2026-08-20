@@ -43,7 +43,10 @@ fn is_var_body(s: &str) -> bool {
     if !(first.is_ascii_alphabetic() || first == '_' || first == '@') {
         return false;
     }
-    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') {
+    // Hyphens are everywhere in real names (my-api-service, my-host), and
+    // allowing them here is safe: the first character still has to be a
+    // letter, so Go's whitespace-trim `{{- if}}` is untouched.
+    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-') {
         return false;
     }
     if RESERVED.contains(&name) {
@@ -203,6 +206,28 @@ mod tests {
             render("sudo systemctl restart {{service}}", &v),
             "sudo systemctl restart api.service"
         );
+    }
+
+    /// Regression: hyphenated names were silently not variables at all, so
+    /// `{{my-api-service}}` stayed as literal braces in the command.
+    #[test]
+    fn hyphens_are_allowed_in_names() {
+        let r = refs("sudo systemctl restart {{my-api-service}}");
+        assert_eq!(r.len(), 1, "a hyphenated name was not recognised");
+        assert_eq!(r[0].name, "my-api-service");
+
+        let mut v = HashMap::new();
+        v.insert("my-api-service".to_string(), "api.service".to_string());
+        assert_eq!(
+            render("sudo systemctl restart {{my-api-service}}", &v),
+            "sudo systemctl restart api.service"
+        );
+    }
+
+    /// Go's whitespace-trim marker must still not be mistaken for a variable.
+    #[test]
+    fn go_trim_markers_are_not_variables() {
+        assert!(refs("{{- if .X}}y{{- end}}").is_empty());
     }
 
     #[test]

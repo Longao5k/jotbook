@@ -185,6 +185,7 @@ pub(crate) fn draw_picker(
     query: &str,
     state: &mut ListState,
 ) {
+    let plat = jot_core::notebook::current_platform();
     let sel_entry = state
         .selected()
         .and_then(|c| hits.get(c))
@@ -234,6 +235,16 @@ pub(crate) fn draw_picker(
                 format!("  {}", e.notebook),
                 Style::default().fg(DIM),
             ));
+            // Label the platform rather than hiding the entry: a Windows box
+            // is often just the terminal you ssh from, and WSL blurs it more.
+            if let Some(p) = e.platform_label() {
+                let style = if e.runs_on(plat) {
+                    Style::default().fg(DIM)
+                } else {
+                    Style::default().fg(WARN)
+                };
+                head.push(Span::styled(format!(" · {p}"), style));
+            }
             ListItem::new(vec![
                 Line::from(head),
                 Line::from(Span::styled(
@@ -271,6 +282,17 @@ pub(crate) fn draw_picker(
                 Style::default().fg(WARN),
             )));
         }
+        if let Some(p) = e.platform_label().filter(|_| !e.runs_on(plat)) {
+            detail.push(Line::from(Span::styled(
+                t!(
+                    "这是 {} 命令，本机是 {} —— ssh 或 WSL 里照样能用",
+                    "A {} command; this machine is {} - still usable over ssh or in WSL",
+                    p,
+                    plat
+                ),
+                Style::default().fg(WARN),
+            )));
+        }
     }
     detail.push(Line::from(Span::styled(
         t!(
@@ -295,7 +317,13 @@ impl Ui {
         let hays: Vec<String> = entries.iter().map(|e| e.haystack()).collect();
         // Frecency weights are precomputed; they are needed on every keystroke
         let now = jot_core::usage::now_secs();
-        let boosts: Vec<i64> = entries.iter().map(|e| usage.boost(&e.id(), now)).collect();
+        let plat = jot_core::notebook::current_platform();
+        // A small nudge, not a filter: what runs here surfaces first, but a
+        // linux command stays one keystroke away on a Windows machine.
+        let boosts: Vec<i64> = entries
+            .iter()
+            .map(|e| usage.boost(&e.id(), now) + if e.runs_on(plat) { 4 } else { 0 })
+            .collect();
 
         let mut query = initial.to_string();
         let mut cursor = 0usize;

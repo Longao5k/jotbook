@@ -184,45 +184,62 @@ fn profiles_are_isolated_from_each_other() {
 }
 
 #[test]
-fn platform_filtering_hides_other_platforms() {
+fn platform_labels_rather_than_hides() {
     let home = temp_home("platform");
+
+    // Everything is listed regardless of platform: people ssh into Linux from
+    // Windows, and run Linux inside WSL on the same machine.
     let systemd = stdout(&jot(&home, &["ls", "--notebook", "systemd"]));
     let powershell = stdout(&jot(&home, &["ls", "--notebook", "powershell"]));
+    assert!(systemd.contains("Restart a service"), "{systemd}");
+    assert!(
+        powershell.contains("Find what is using a port"),
+        "{powershell}"
+    );
 
-    if cfg!(target_os = "windows") {
-        // Asked for by name, so it reports itself - but lists no entries
-        assert!(
-            !systemd.contains("Restart a service"),
-            "a systemd entry was listed on Windows:\n{systemd}"
-        );
-        assert!(
-            systemd.contains("hidden by @platform"),
-            "did not explain why systemd is empty:\n{systemd}"
-        );
-        assert!(
-            powershell.contains("#"),
-            "powershell entries should show on Windows"
-        );
-    } else {
-        assert!(
-            !powershell.contains("Find what is using a port"),
-            "a powershell entry was listed off Windows:\n{powershell}"
-        );
-    }
-
-    // Neither should turn up in an unfiltered listing on the wrong platform
+    // ...but the ones that will not run here as-is are marked
     let all = stdout(&jot(&home, &["ls"]));
-    if cfg!(target_os = "windows") {
-        assert!(
-            !all.contains("# systemd"),
-            "systemd appeared in a full listing"
-        );
+    assert!(
+        all.contains("# systemd"),
+        "systemd missing from a full listing"
+    );
+    assert!(
+        all.contains("# powershell"),
+        "powershell missing from a full listing"
+    );
+    let foreign = if cfg!(target_os = "windows") {
+        "[linux]"
     } else {
-        assert!(
-            !all.contains("# powershell"),
-            "powershell appeared in a full listing"
-        );
-    }
+        "[windows]"
+    };
+    assert!(
+        all.contains(foreign),
+        "commands for another platform are not labelled:
+{}",
+        &all[..600.min(all.len())]
+    );
+}
+
+/// The search must reach every entry, not just the ones for this platform.
+#[test]
+fn other_platforms_are_still_searchable() {
+    let home = temp_home("platsearch");
+    // A linux-only entry with no variables, so this tests reachability alone
+    let o = jot(
+        &home,
+        &[
+            "pick",
+            "-q",
+            "List services that failed to start",
+            "--first",
+        ],
+    );
+    assert!(
+        o.status.success(),
+        "a linux entry was unreachable from this platform: {}",
+        stderr(&o)
+    );
+    assert_eq!(stdout(&o).trim(), "systemctl --failed");
 }
 
 #[test]
@@ -1035,7 +1052,7 @@ fn platform_settles_the_fence_language() {
 /// Saving a linux command on Windows must not look like it vanished: the
 /// entry is there, @platform just hides it.
 #[test]
-fn ls_reports_entries_hidden_by_platform() {
+fn ls_marks_entries_for_another_platform() {
     let home = temp_home("lshidden");
     let dir = home.join("notebooks").join("local");
     std::fs::create_dir_all(&dir).unwrap();
@@ -1047,8 +1064,22 @@ fn ls_reports_entries_hidden_by_platform() {
     std::fs::write(
         dir.join("mixed.md"),
         format!(
-            "---\nname: mixed\n---\n\n## Visible one\n\n```sh\necho here\n```\n\n\
-## Hidden one\n\n```sh @platform={other}\necho elsewhere\n```\n"
+            "---
+name: mixed
+---
+
+## Visible one
+
+```sh
+echo here
+```
+
+## Elsewhere one
+
+```sh @platform={other}
+echo elsewhere
+```
+"
         ),
     )
     .unwrap();
@@ -1056,21 +1087,15 @@ fn ls_reports_entries_hidden_by_platform() {
     let o = stdout(&jot(&home, &["ls", "--notebook", "mixed"]));
     assert!(o.contains("Visible one"), "{o}");
     assert!(
-        o.contains("1 more hidden by @platform"),
-        "did not say an entry was hidden:\n{o}"
+        o.contains("Elsewhere one"),
+        "an entry was hidden rather than labelled:
+{o}"
     );
-}
-
-/// Asking for a notebook by name must never print nothing, even when every
-/// entry in it is hidden here.
-#[test]
-fn ls_of_an_all_hidden_notebook_still_says_something() {
-    let home = temp_home("lsallhidden");
-    let o = stdout(&jot(&home, &["ls", "--notebook", "systemd"]));
-    if cfg!(target_os = "windows") {
-        assert!(o.contains("# systemd"), "printed nothing at all:\n{o}");
-        assert!(o.contains("hidden by @platform"), "{o}");
-    }
+    assert!(
+        o.contains(&format!("[{other}]")),
+        "not labelled:
+{o}"
+    );
 }
 
 #[test]

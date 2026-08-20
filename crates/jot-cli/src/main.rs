@@ -758,11 +758,7 @@ fn cmd_ls(notebook: Option<&str>) -> Result<i32> {
                 continue;
             }
         }
-        let visible: Vec<&Entry> = nb.entries.iter().filter(|e| e.visible_on(plat)).collect();
-        let hidden = nb.entries.len() - visible.len();
-        // Say nothing about a notebook that is entirely irrelevant here, but
-        // never stay silent about one the user asked for by name
-        if visible.is_empty() && notebook.is_none() {
+        if nb.entries.is_empty() && notebook.is_none() {
             continue;
         }
         println!(
@@ -771,25 +767,20 @@ fn cmd_ls(notebook: Option<&str>) -> Result<i32> {
                 "\n# {}  ({} 条)  {}",
                 "\n# {}  ({} entries)  {}",
                 nb.name,
-                visible.len(),
+                nb.entries.len(),
                 nb.description
             )
         );
-        for e in visible {
-            println!("  {:<40} {}", e.title, vars::preview(&e.command));
-        }
-        // Without this, saving a linux command on Windows looks like it
-        // vanished: the entry is there, just filtered out by @platform.
-        if hidden > 0 {
-            println!(
-                "{}",
-                t!(
-                    "  （另有 {} 条被 @platform 隐藏，当前平台是 {}）",
-                    "  ({} more hidden by @platform; this platform is {})",
-                    hidden,
-                    plat
-                )
-            );
+        for e in &nb.entries {
+            // A platform is a label, not a filter: you may well be running a
+            // linux command from Windows over ssh, or inside WSL. Square
+            // brackets mark the ones that will not run here as-is.
+            let tag = match e.platform_label() {
+                Some(p) if !e.runs_on(plat) => format!("  [{p}]"),
+                Some(p) => format!("  ({p})"),
+                None => String::new(),
+            };
+            println!("  {:<40} {}{}", e.title, vars::preview(&e.command), tag);
         }
     }
     Ok(0)
@@ -1183,7 +1174,6 @@ fn cmd_rename(from: &str, to: &str) -> Result<i32> {
 fn cmd_notebooks(names_only: bool) -> Result<i32> {
     let paths = Paths::discover()?;
     let lib = Library::load(&paths)?;
-    let plat = jot_core::notebook::current_platform();
 
     if names_only {
         let mut names: Vec<&str> = lib.notebooks.iter().map(|n| n.name.as_str()).collect();
@@ -1207,20 +1197,9 @@ fn cmd_notebooks(names_only: bool) -> Result<i32> {
     let mut rows: Vec<(String, usize, String)> = lib
         .notebooks
         .iter()
-        .map(|n| {
-            let visible = n.entries.iter().filter(|e| e.visible_on(plat)).count();
-            (n.name.clone(), visible, n.description.clone())
-        })
+        .map(|n| (n.name.clone(), n.entries.len(), n.description.clone()))
         .collect();
-    // Keep a notebook you just created and have not filled in yet, but drop
-    // one whose entries are all hidden by @platform - that is just noise.
-    rows.retain(|(name, visible, _)| {
-        *visible > 0
-            || lib
-                .notebooks
-                .iter()
-                .any(|n| n.name == *name && n.entries.is_empty())
-    });
+
     rows.sort_by(|a, b| a.0.cmp(&b.0));
 
     for (name, visible, description) in &rows {
@@ -1232,8 +1211,8 @@ fn cmd_notebooks(names_only: bool) -> Result<i32> {
     println!(
         "{}",
         t!(
-            "  {} 本 · {} 条（当前平台可见）",
-            "  {} notebooks, {} entries visible on this platform",
+            "  {} 本 · {} 条",
+            "  {} notebooks, {} entries",
             rows.len(),
             total
         )
@@ -1327,10 +1306,10 @@ fn cmd_doctor() -> Result<i32> {
     println!(
         "{}",
         t!(
-            "条目            {} 条（当前平台可见 {} 条）",
-            "entries         {} ({} visible on this platform)",
-            lib.notebooks.iter().map(|n| n.entries.len()).sum::<usize>(),
-            lib.entry_count()
+            "条目            {} 条（其中 {} 条可在本机直接跑）",
+            "entries         {} ({} run as-is on this platform)",
+            lib.entry_count(),
+            lib.entries().iter().filter(|e| e.runs_on(plat)).count()
         )
     );
     println!(

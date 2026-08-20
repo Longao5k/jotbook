@@ -95,13 +95,15 @@ impl Library {
         })
     }
 
-    /// Every entry visible on the current platform.
+    /// Every entry, regardless of platform.
+    ///
+    /// Nothing is hidden: a Windows machine is often just the terminal you
+    /// ssh from, and WSL blurs the line further. @platform labels an entry
+    /// and nudges ranking; it never removes it.
     pub fn entries(&self) -> Vec<&Entry> {
-        let plat = notebook::current_platform();
         self.notebooks
             .iter()
             .flat_map(|n| n.entries.iter())
-            .filter(|e| e.visible_on(plat))
             .collect()
     }
 

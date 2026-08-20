@@ -46,6 +46,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
+      # A tag can be pushed at any commit, including one CI never went green
+      # on. Shipping a binary that fails its own tests is worse than shipping
+      # nothing, so the gate is here rather than only on the main branch.
+      # Skipped when cross-compiling, where the binaries cannot be run.
+      - name: Test
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: cargo test --workspace --release --target ${{ matrix.target }}
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} -p jot-cli
 

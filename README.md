@@ -7,23 +7,7 @@
 
 A notebook for the commands **you** actually use. Hit one key, the command lands on your prompt — you press Enter.
 
-```
-┌ jot  4/459 ──────────────────────────────────────┐
-│ › docker logs                                    │
-└──────────────────────────────────────────────────┘
-❯ Follow container logs                     docker
-    docker logs -f --tail 200 ⟨container⟩
-  Recent logs with timestamps               docker
-    docker logs --timestamps --since 30m ⟨container⟩
-───────────────────────────────────────────────────
- ↑↓ move   ⏎ use   ^E open file   esc cancel
-```
-
-Pick it, fill in the blanks, and the finished command is sitting on your command line:
-
-```
-$ docker logs -f --tail 200 kestrel-api▏
-```
+<img src="docs/demo.svg" alt="jot: search your commands, fill in the variables, and it lands on your prompt" width="100%">
 
 ## Why
 

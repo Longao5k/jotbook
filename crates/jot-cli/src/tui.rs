@@ -169,7 +169,11 @@ pub(crate) fn score(
 fn clamp_line(s: &str, max: usize) -> String {
     use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-    let s = s.replace('\n', " ⏎ ");
+    // Everything drawn goes through here, so this is the one place that can
+    // guarantee no control character reaches a cell. One tab is enough to
+    // desync the whole screen: the terminal jumps to its next tab stop while
+    // the TUI believes it advanced by a single column.
+    let s = jot_core::resolve::printable(&s.replace('\n', " ⏎ "));
     if s.width() <= max {
         return s;
     }
@@ -488,7 +492,9 @@ pub(crate) fn draw_prompt(f: &mut Frame, headline: &str, body: &str, help: &str)
         chunks[0],
     );
     f.render_widget(
-        Paragraph::new(body.to_string())
+        // Wrapped rather than clamped, so this is the one drawing path that
+        // does not go through clamp_line and has to sanitise for itself.
+        Paragraph::new(jot_core::resolve::printable(body))
             .wrap(Wrap { trim: false })
             .block(
                 Block::default()
@@ -1412,6 +1418,56 @@ mod question_screens {
                 let _ = name; // drawing without panicking is the assertion
             }
         }
+    }
+
+    /// The docker notebook declares `cmd: docker ps --format "…\t…"`, so a tab
+    /// arrives in the candidate list as a matter of course. One of them used to
+    /// scatter the whole screen: the terminal jumps to its next tab stop while
+    /// ratatui believes it advanced a single column, and every column after
+    /// that disagrees.
+    #[test]
+    fn a_tab_in_a_candidate_does_not_reach_a_cell() {
+        let opts = [
+            Choice {
+                value: "backend-web-1".into(),
+                display: "backend-web-1\tExited (255) 7 weeks ago".into(),
+            },
+            Choice {
+                value: "backend-db-1".into(),
+                display: "backend-db-1\tUp 3 hours".into(),
+            },
+        ];
+        let refs: Vec<&Choice> = opts.iter().collect();
+        let text = dump(80, 16, |f| {
+            let mut st = ListState::default();
+            st.select(Some(0));
+            draw_ask_choice(
+                f,
+                "docker logs ⟨container⟩",
+                "container",
+                "",
+                &refs,
+                false,
+                &mut st,
+            )
+        });
+
+        assert!(!text.contains('\t'), "a tab reached the buffer:\n{text}");
+        assert!(
+            text.contains("backend-web-1  Exited (255) 7 weeks ago"),
+            "the candidate did not survive being sanitised:\n{text}"
+        );
+    }
+
+    /// Titles and descriptions come from files anyone can edit, so the same
+    /// guarantee has to hold for whatever they put in one.
+    #[test]
+    fn clamp_line_refuses_to_pass_control_characters_through() {
+        assert_eq!(clamp_line("a\tb", 40), "a  b");
+        assert_eq!(clamp_line("a\u{1b}[31mb", 40), "ab");
+        assert_eq!(clamp_line("a\u{7}b", 40), "ab");
+        // The one control character with a meaning worth keeping
+        assert_eq!(clamp_line("a\nb", 40), "a ⏎ b");
     }
 
     /// An empty checklist happens whenever a paste yields nothing usable.

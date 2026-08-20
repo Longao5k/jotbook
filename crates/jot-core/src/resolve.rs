@@ -62,14 +62,50 @@ pub fn shell_candidates(cmd: &str) -> Vec<Choice> {
             continue;
         }
         seen.push(Choice {
-            value,
-            display: line.to_string(),
+            value: printable(&value),
+            display: printable(line),
         });
         if seen.len() >= 500 {
             break;
         }
     }
     seen
+}
+
+/// Strip anything a terminal would act on rather than draw.
+///
+/// A tab is the one that bites: `docker ps --format "…\t…"` is a perfectly
+/// ordinary thing to write, and a tab written into a cell makes the terminal
+/// jump to its next tab stop while the TUI still believes it advanced by one.
+/// From there the two disagree about every column, and the list comes out
+/// scattered across the screen with characters missing.
+///
+/// Escape sequences would be worse still: a candidate list is command output,
+/// and command output should never be able to move the cursor.
+pub fn printable(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\t' => out.push_str("  "),
+            // CSI and OSC sequences: drop up to the byte that ends them
+            '\u{1b}' => {
+                let terminator: fn(char) -> bool = match chars.peek() {
+                    Some('[') => |c: char| c.is_ascii_alphabetic(),
+                    Some(']') => |c: char| c == '\u{7}' || c == '\\',
+                    _ => |_: char| true,
+                };
+                for c in chars.by_ref() {
+                    if terminator(c) {
+                        break;
+                    }
+                }
+            }
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// How often to look in on a running child. Short enough that a fast command
@@ -211,9 +247,13 @@ pub fn plan(
         };
     }
 
+    // A desc that only restates the name reads as a stutter on screen -
+    // "container — container" - and several notebooks carry exactly that.
     let label = match decl.and_then(|d| d.desc.clone()) {
-        Some(desc) => format!("{name} — {desc}"),
-        None => name.to_string(),
+        Some(desc) if !desc.trim().eq_ignore_ascii_case(name.trim()) => {
+            format!("{name} — {}", desc.trim())
+        }
+        _ => name.to_string(),
     };
 
     // Undeclared variables consult the profile too. The `{{service}}` produced by
@@ -316,6 +356,65 @@ mod tests {
         match plan("whatever", Some("8000"), None, &p, "default", false) {
             Ask::Text { default, .. } => assert_eq!(default.as_deref(), Some("8000")),
             other => panic!("should have been free text, got {other:?}"),
+        }
+    }
+
+    /// A tab in a candidate list scattered the picker across the screen: the
+    /// terminal jumped to its next tab stop while ratatui believed it had
+    /// advanced one column, and from there the two disagreed about every
+    /// column after it. `docker ps --format "{{.Names}}\t{{.Status}}"` - the
+    /// declaration shipped in the docker notebook - produces exactly that.
+    #[test]
+    fn a_tab_cannot_reach_the_screen() {
+        assert_eq!(
+            printable("backend-web-1\tExited (255) 7 weeks ago"),
+            "backend-web-1  Exited (255) 7 weeks ago"
+        );
+    }
+
+    /// Candidates are command output, and command output must never be able to
+    /// move the cursor or repaint the screen.
+    #[test]
+    fn escape_sequences_are_stripped_whole() {
+        assert_eq!(printable("\u{1b}[31mred\u{1b}[0m"), "red");
+        assert_eq!(printable("\u{1b}]0;title\u{7}ok"), "ok");
+        assert_eq!(printable("a\u{7}b\rc"), "abc");
+    }
+
+    /// Ordinary text has to come through untouched, including CJK, or the fix
+    /// costs more than the bug.
+    #[test]
+    fn printable_leaves_real_text_alone() {
+        for s in [
+            "docker logs -f --tail 200 api",
+            "查看容器最近的日志 · api-worker",
+            "CREATE USER 'x'@'%' IDENTIFIED BY '{{password}}';",
+        ] {
+            assert_eq!(printable(s), s);
+        }
+    }
+
+    /// `desc: container` on a variable called `container` rendered as
+    /// "container — container" in the box title.
+    #[test]
+    fn a_desc_that_restates_the_name_is_not_repeated() {
+        let p = Profiles::default();
+        let decl = VarDecl {
+            desc: Some("container".into()),
+            ..VarDecl::default()
+        };
+        match plan("container", None, Some(&decl), &p, "default", false) {
+            Ask::Text { label, .. } => assert_eq!(label, "container"),
+            other => panic!("expected free text, got {other:?}"),
+        }
+
+        let decl = VarDecl {
+            desc: Some("compose service".into()),
+            ..VarDecl::default()
+        };
+        match plan("service", None, Some(&decl), &p, "default", false) {
+            Ask::Text { label, .. } => assert_eq!(label, "service — compose service"),
+            other => panic!("expected free text, got {other:?}"),
         }
     }
 

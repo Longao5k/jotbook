@@ -425,7 +425,10 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
                 // @remote entries, whose candidates would be evaluated locally
                 entry.trusted && !entry.remote,
             );
-            let context = vars::render(&entry.command, &values);
+            // What is settled shows its value; what is still to come shows
+            // ⟨name⟩, the same way the picker and `jot ls` write it. Raw
+            // {{braces}} here were the one place that disagreed.
+            let context = vars::preview_with(&entry.command, &values);
             let (got, was_asked) = match plan {
                 Ask::Resolved(v) => (Answer::Value(v), false),
                 Ask::Choose {

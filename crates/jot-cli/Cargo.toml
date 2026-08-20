@@ -1,8 +1,13 @@
 [package]
 name = "jot-cli"
+description = "A notebook for your own commands, one keypress away"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["cli", "shell", "snippets", "terminal", "productivity"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "jot"
@@ -15,7 +20,7 @@ clap = { version = "4", features = ["derive"] }
 ratatui = "0.29"
 fuzzy-matcher = "0.3"
 arboard = { version = "3", default-features = false }
-# 截断要按终端列数算，不是字符数 —— 中文一个字占两列
+# Truncation counts terminal columns, not characters: a CJK character is two columns wide
 unicode-width = "0.2"
 
 [target.'cfg(windows)'.dependencies]

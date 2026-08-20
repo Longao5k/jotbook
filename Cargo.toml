@@ -6,7 +6,8 @@ members = ["crates/jot-core", "crates/jot-cli"]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/yourname/jotbook"
+repository = "https://github.com/Longao5k/jotbook"
+homepage = "https://github.com/Longao5k/jotbook"
 
 [workspace.dependencies]
 anyhow = "1"

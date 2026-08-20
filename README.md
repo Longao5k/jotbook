@@ -47,8 +47,12 @@ That's a **retrieval** problem, not a generation problem. And `sudo systemctl re
 
 ## Install
 
+Grab a binary from [Releases](https://github.com/Longao5k/jotbook/releases) — Windows, Linux, and both Mac architectures — and put `jot` on your `PATH`.
+
+Or build it, which needs [Rust](https://rustup.rs):
+
 ```bash
-cargo install --path crates/jot-cli
+cargo install --git https://github.com/Longao5k/jotbook jot-cli
 ```
 
 Then wire up your shell. One line — the script itself ships with the binary, so upgrades never require touching your config again.

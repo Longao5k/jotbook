@@ -1,0 +1,64 @@
+name: Bug report
+description: Something jot does wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most jot bugs turn out to be about the shell integration, the terminal,
+        or an encoding — so the boxes below ask for the things that actually
+        narrow it down. Feel free to write in English or 中文.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: jot --version
+      placeholder: jot 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: shell
+    attributes:
+      label: Shell
+      options:
+        - PowerShell
+        - Windows PowerShell 5.1
+        - bash
+        - zsh
+        - fish
+        - other / not using the shell integration
+    validations:
+      required: true
+
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal and OS
+      description: Windows Terminal, iTerm2, Konsole, WSL, over ssh…
+      placeholder: Windows Terminal on Windows 11 / WSL Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: jot doctor
+      description: Paste the output. It reports where your data lives and what is installed.
+      render: text
+
+  - type: checkboxes
+    id: keypress
+    attributes:
+      label: If the key binding is the problem
+      options:
+        - label: I restarted the shell after running `jot init`
+        - label: Running `jot` on its own does work

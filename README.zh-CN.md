@@ -47,8 +47,12 @@ $ docker logs -f --tail 200 kestrel-api▏
 
 ## 安装
 
+去 [Releases](https://github.com/Longao5k/jotbook/releases) 下一个二进制 —— Windows、Linux、Mac 两种架构都有 —— 把 `jot` 放进 `PATH` 就行。
+
+或者自己编译，需要 [Rust](https://rustup.rs)：
+
 ```bash
-cargo install --path crates/jot-cli
+cargo install --git https://github.com/Longao5k/jotbook jot-cli
 ```
 
 然后接上你的 shell。只有一行，脚本本体随二进制发布，以后升级不用再动配置。

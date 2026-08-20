@@ -1,0 +1,42 @@
+name: Commands worth adding
+description: Suggest commands for a built-in notebook
+labels: [notebooks]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most useful thing you can send. A pull request against
+        `notebooks/en/*.md` is even better and needs no Rust — but an issue is
+        fine, and someone will write it up.
+
+        What earns a place is a command **people cannot remember**, not
+        coverage of `--help`. English or 中文 both welcome.
+
+  - type: input
+    id: notebook
+    attributes:
+      label: Which notebook
+      description: An existing one (`jot notebooks` lists them), or a new one you are proposing.
+      placeholder: docker / kubectl / a new one for terraform
+    validations:
+      required: true
+
+  - type: textarea
+    id: commands
+    attributes:
+      label: The commands
+      description: One per line, with a note on what each is for. Rough is fine — jot's own paste importer normalises this shape.
+      placeholder: |
+        docker system prune -af --volumes    reclaim disk, removes everything unused
+        kubectl get events --sort-by=.lastTimestamp    what just went wrong
+      render: text
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send
+      options:
+        - label: No secrets, tokens, or hostnames from a real system
+        - label: Anything destructive is marked, so jot can ask before it goes on the prompt

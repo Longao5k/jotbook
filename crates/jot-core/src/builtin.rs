@@ -213,6 +213,131 @@ mod tests {
         }
     }
 
+    /// Does this command hand a credential-shaped key a *literal* value?
+    ///
+    /// `capture::looks_secret` is the right check for a command coming out of
+    /// shell history, where the mere word "password" means a real one may be
+    /// sitting next to it. It is far too blunt for a notebook, where naming
+    /// the concept is the entire point: `dotnet user-secrets list` and
+    /// `Authorization: Bearer {{token}}` are exactly what belongs there.
+    ///
+    /// What actually matters is whether the value is a `{{variable}}` or
+    /// something opaque somebody forgot to take out.
+    ///
+    /// Deliberately narrow: the value has to contain a digit, which is what
+    /// keeps ordinary prose from tripping it. An all-letters passphrase gets
+    /// through, and that is the trade - a lint contributors learn to ignore
+    /// protects nothing.
+    fn assigns_a_literal_credential(cmd: &str) -> Option<String> {
+        const KEYS: &[&str] = &[
+            "password",
+            "passwd",
+            "token",
+            "secret",
+            "api_key",
+            "apikey",
+            "private_key",
+            "credential",
+            "access_key",
+            "authorization",
+            "bearer",
+        ];
+        let lower = cmd.to_ascii_lowercase();
+
+        for key in KEYS {
+            let mut from = 0usize;
+            while let Some(at) = lower[from..].find(key) {
+                let after = from + at + key.len();
+                from = after;
+                let tail = &lower[after..];
+                // Another letter straight after means the needle was part of a
+                // longer word - `user-secrets`, `passwordless` - not a key
+                // about to be handed a value.
+                if tail.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+                    continue;
+                }
+                // `=`, `:` and a plain space are all how a value gets attached:
+                // KEY=v, "Header: v", --password v.
+                let rest = tail.trim_start();
+                let rest = rest
+                    .strip_prefix('=')
+                    .or_else(|| rest.strip_prefix(':'))
+                    .unwrap_or(rest);
+                let value = rest.trim_start().trim_start_matches(['"', '\'']);
+                if value.starts_with("{{") {
+                    continue; // a variable, which is the whole point
+                }
+                let word = value.split_whitespace().next().unwrap_or("");
+                let word = word.trim_end_matches(['"', '\'', ';', ',']);
+                // Short words are prose or a flag; long opaque runs are keys
+                let opaque = word.len() >= 12
+                    && word
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "_-./+=".contains(c))
+                    && word.chars().any(|c| c.is_ascii_digit());
+                if opaque {
+                    return Some(word.to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Notebooks are the contribution people send most, and a pasted command is
+    /// exactly where a real token gets left behind. `jot save` refuses one, but
+    /// a file committed straight into the repo never goes through `jot save` -
+    /// so the check has to live where CI sees every pull request.
+    #[test]
+    fn no_builtin_notebook_carries_a_literal_credential() {
+        let mut caught = Vec::new();
+        for (lang, set) in all_sets() {
+            for (name, content) in set {
+                let nb = crate::notebook::parse(Path::new(name), content)
+                    .unwrap_or_else(|e| panic!("{lang}/{name} does not parse: {e}"));
+                for e in &nb.entries {
+                    if let Some(value) = assigns_a_literal_credential(&e.command) {
+                        caught.push(format!("{lang}/{name}: {} -> {value}", e.title));
+                    }
+                }
+            }
+        }
+        assert!(
+            caught.is_empty(),
+            "a credential is written out in full; use a {{{{variable}}}}:\n  {}",
+            caught.join("\n  ")
+        );
+    }
+
+    /// The lint itself, since a lint that never fires is indistinguishable from
+    /// one that is broken - and one that fires on ordinary entries is worse.
+    #[test]
+    fn the_credential_lint_tells_the_two_cases_apart() {
+        for bad in [
+            "export GITHUB_TOKEN=ghp_1a2b3c4d5e6f7g8h",
+            "docker login -u me --password Hunter2Hunter2",
+            "curl -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9xx'",
+        ] {
+            assert!(
+                assigns_a_literal_credential(bad).is_some(),
+                "let a real credential through: {bad}"
+            );
+        }
+        for fine in [
+            "dotnet user-secrets list",
+            "kubectl get secret {{name}} -n {{ns}}",
+            r#"curl {{url}} -H "Authorization: Bearer {{token}}""#,
+            "docker run -e MYSQL_ROOT_PASSWORD={{password}} mysql:8",
+            "CREATE LOGIN [{{user}}] WITH PASSWORD = '{{password}}';",
+            "security find-generic-password -ga \"{{ssid}}\" | grep password",
+        ] {
+            assert_eq!(
+                assigns_a_literal_credential(fine),
+                None,
+                "flagged an ordinary entry: {fine}"
+            );
+        }
+    }
+
     #[test]
     fn english_notebooks_contain_no_chinese() {
         for (name, content) in BUILTIN_EN {

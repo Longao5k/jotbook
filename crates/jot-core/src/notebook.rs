@@ -226,6 +226,91 @@ fn fence_marker(line: &str) -> Option<(usize, &str)> {
     Some((indent, t[ticks..].trim()))
 }
 
+/// Line indices of the `## ` headings in `lines`, ignoring any inside a fenced
+/// block or an HTML comment - same rules the parser itself follows.
+fn heading_lines(lines: &[&str]) -> Vec<usize> {
+    let mut heads = Vec::new();
+    let mut in_comment = false;
+    let mut in_fence = false;
+    let mut ticks = 0usize;
+
+    for (i, raw) in lines.iter().enumerate() {
+        let t = raw.trim_start();
+        if in_comment {
+            if raw.contains("-->") {
+                in_comment = false;
+            }
+            continue;
+        }
+        if in_fence {
+            if t.starts_with("```")
+                && t.chars().take_while(|c| *c == '`').count() >= ticks
+                && t[ticks.min(t.len())..].trim().is_empty()
+            {
+                in_fence = false;
+            }
+            continue;
+        }
+        if t.starts_with("<!--") {
+            if !t.contains("-->") {
+                in_comment = true;
+            }
+            continue;
+        }
+        if fence_marker(raw).is_some() {
+            in_fence = true;
+            ticks = t.chars().take_while(|c| *c == '`').count();
+            continue;
+        }
+        if t.starts_with("## ") {
+            heads.push(i);
+        }
+    }
+    heads
+}
+
+/// The text of `notebook` with one entry taken out.
+///
+/// `fence_line` is `Entry::line` - the 1-based line the command's opening fence
+/// sits on. The whole `## section` around it goes, heading and description
+/// included, because half an entry left behind is worse than none.
+///
+/// `None` when that line is not inside an entry, which means the file changed
+/// underneath us and rewriting it would delete the wrong thing.
+pub fn without_entry(text: &str, fence_line: usize) -> Option<String> {
+    let (fm_raw, body, fm_lines) = split_frontmatter(text);
+    let lines: Vec<&str> = body.lines().collect();
+    let target = fence_line.checked_sub(fm_lines + 1)?;
+    if target >= lines.len() {
+        return None;
+    }
+
+    let heads = heading_lines(&lines);
+    let start = heads.iter().rev().find(|h| **h <= target).copied()?;
+    let end = heads
+        .iter()
+        .find(|h| **h > target)
+        .copied()
+        .unwrap_or(lines.len());
+
+    let mut kept: Vec<&str> = Vec::with_capacity(lines.len());
+    kept.extend_from_slice(&lines[..start]);
+    kept.extend_from_slice(&lines[end..]);
+    while kept.last().is_some_and(|l| l.trim().is_empty()) {
+        kept.pop();
+    }
+
+    let mut out = String::new();
+    if let Some(fm) = fm_raw {
+        out.push_str("---\n");
+        out.push_str(fm);
+        out.push_str("---\n");
+    }
+    out.push_str(&kept.join("\n"));
+    out.push('\n');
+    Some(out)
+}
+
 pub fn parse(path: &Path, text: &str) -> Result<Notebook> {
     let (fm_raw, body, fm_lines) = split_frontmatter(text);
     let fm: FrontMatter = match fm_raw {
@@ -496,5 +581,113 @@ mod comment_tests {
         let nb = parse(Path::new("x.md"), src).unwrap();
         assert_eq!(nb.entries.len(), 1);
         assert_eq!(nb.entries[0].command, "echo '<!-- not a comment -->'");
+    }
+}
+
+/// Taking an entry back out again.
+///
+/// Deleting is the one edit that cannot be undone by reading the file, so these
+/// hold it to a high bar: the right section goes, everything else survives
+/// byte for byte, and anything ambiguous refuses rather than guesses.
+#[cfg(test)]
+mod removal {
+    use super::*;
+
+    const SRC: &str = "---\nname: demo\n---\n\n\
+## First\n\n\
+Notes about the first one.\n\n\
+```sh\necho one\n```\n\n\
+## Second\n\n\
+```sh\necho two\n```\n\n\
+## Third\n\n\
+```sh\necho three\n```\n";
+
+    fn entries_of(text: &str) -> Vec<Entry> {
+        parse(Path::new("demo.md"), text).unwrap().entries
+    }
+
+    fn remove_titled(text: &str, title: &str) -> String {
+        let e = entries_of(text)
+            .into_iter()
+            .find(|e| e.title == title)
+            .unwrap_or_else(|| panic!("no entry called {title}"));
+        without_entry(text, e.line).expect("should have found the section")
+    }
+
+    #[test]
+    fn removing_the_middle_entry_leaves_the_others_intact() {
+        let out = remove_titled(SRC, "Second");
+        let titles: Vec<String> = entries_of(&out).into_iter().map(|e| e.title).collect();
+        assert_eq!(titles, ["First", "Third"]);
+        assert!(!out.contains("echo two"), "the command survived:\n{out}");
+        assert!(out.contains("echo one") && out.contains("echo three"));
+    }
+
+    /// The description belongs to the entry and has to go with it.
+    #[test]
+    fn the_description_goes_too() {
+        let out = remove_titled(SRC, "First");
+        assert!(!out.contains("Notes about the first one"), "{out}");
+        assert!(!out.contains("## First"), "{out}");
+    }
+
+    #[test]
+    fn the_frontmatter_survives() {
+        let out = remove_titled(SRC, "Second");
+        assert!(out.starts_with("---\nname: demo\n---\n"), "{out}");
+        assert_eq!(parse(Path::new("demo.md"), &out).unwrap().name, "demo");
+    }
+
+    #[test]
+    fn removing_the_last_entry_is_fine() {
+        let out = remove_titled(SRC, "Third");
+        assert_eq!(entries_of(&out).len(), 2);
+        assert!(out.ends_with('\n'), "no trailing newline:\n{out:?}");
+        assert!(!out.ends_with("\n\n\n"), "blank lines piled up:\n{out:?}");
+    }
+
+    #[test]
+    fn removing_the_only_entry_leaves_a_valid_empty_notebook() {
+        let one = "---\nname: solo\n---\n\n## Only\n\n```sh\necho hi\n```\n";
+        let out = remove_titled(one, "Only");
+        let nb = parse(Path::new("solo.md"), &out).unwrap();
+        assert!(nb.entries.is_empty());
+        assert_eq!(nb.name, "solo");
+    }
+
+    /// A `## heading` inside a fenced block is content, not a section boundary.
+    /// Treating it as one would cut the entry short and leave the rest orphaned.
+    #[test]
+    fn a_heading_inside_a_fence_is_not_a_boundary() {
+        let src = "## Write a doc\n\n\
+```sh\ncat > x.md <<EOF\n## Not a heading\nEOF\n```\n\n\
+## After\n\n```sh\necho after\n```\n";
+        let out = remove_titled(src, "Write a doc");
+        assert!(!out.contains("Not a heading"), "cut short:\n{out}");
+        assert_eq!(
+            entries_of(&out)
+                .into_iter()
+                .map(|e| e.title)
+                .collect::<Vec<_>>(),
+            ["After"]
+        );
+    }
+
+    /// A stale line number means the file moved under us. Rewriting it then
+    /// would delete something the user never chose.
+    #[test]
+    fn a_line_outside_any_entry_refuses() {
+        assert!(without_entry(SRC, 9_999).is_none());
+        assert!(without_entry("no entries here\n", 1).is_none());
+    }
+
+    /// The frontmatter offset is easy to get wrong by one, and being off by one
+    /// deletes the neighbouring entry instead.
+    #[test]
+    fn the_line_number_lines_up_with_the_parser() {
+        let no_fm = "## A\n\n```sh\necho a\n```\n\n## B\n\n```sh\necho b\n```\n";
+        let out = remove_titled(no_fm, "A");
+        assert!(!out.contains("echo a"), "{out}");
+        assert!(out.contains("echo b"), "{out}");
     }
 }

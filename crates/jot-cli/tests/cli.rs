@@ -961,12 +961,7 @@ fn save_parameterizes_against_the_profile() {
     jot(&home, &["new", "work"]);
     jot(
         &home,
-        &[
-            "profile",
-            "set",
-            "service",
-            "kestrel-orders-api.service",
-        ],
+        &["profile", "set", "service", "kestrel-orders-api.service"],
     );
 
     let o = jot(
@@ -1283,5 +1278,107 @@ fn import_targets_a_named_notebook() {
         help.contains("--notebook"),
         "history import cannot target a notebook:
 {help}"
+    );
+}
+
+// ─────────────────────────── jot rm ───────────────────────────
+
+#[test]
+fn rm_deletes_one_of_your_own_entries() {
+    let home = temp_home("rm-own");
+    jot(&home, &["new", "mine"]);
+    jot(
+        &home,
+        &["save", "-n", "mine", "--title", "Keep me", "echo keep"],
+    );
+    jot(
+        &home,
+        &["save", "-n", "mine", "--title", "Delete me", "echo gone"],
+    );
+
+    let o = jot(&home, &["rm", "-y", "Delete me"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(stderr(&o).contains("deleted"), "{}", stderr(&o));
+
+    let listed = stdout(&jot(&home, &["ls", "--notebook", "mine"]));
+    assert!(
+        !listed.contains("echo gone"),
+        "the entry is still listed:\n{listed}"
+    );
+    assert!(
+        listed.contains("echo keep"),
+        "it took the neighbour with it:\n{listed}"
+    );
+}
+
+/// Built-ins are reinstalled on the next version bump, so a deletion that
+/// appeared to work would quietly undo itself. Refusing is the honest answer.
+#[test]
+fn rm_refuses_entries_that_would_come_back() {
+    let home = temp_home("rm-builtin");
+    jot(&home, &["doctor"]); // seed the built-ins
+
+    let o = jot(&home, &["rm", "-y", "git status"]);
+    assert!(!o.status.success(), "it deleted a built-in entry");
+    let why = stderr(&o);
+    assert!(
+        why.contains("not one of your own") && why.contains("jot edit"),
+        "the refusal does not say what to do instead:\n{why}"
+    );
+}
+
+#[test]
+fn rm_without_a_search_term_does_not_guess() {
+    let home = temp_home("rm-blind");
+    jot(&home, &["doctor"]);
+    let o = jot(&home, &["rm", "-y"]);
+    assert!(!o.status.success(), "it deleted something unprompted");
+}
+
+#[test]
+fn rm_leaves_the_file_alone_when_nothing_matches() {
+    let home = temp_home("rm-nomatch");
+    jot(&home, &["new", "mine"]);
+    jot(&home, &["save", "-n", "mine", "--title", "One", "echo one"]);
+    let before = std::fs::read_to_string(home.join("notebooks/local/mine.md")).unwrap();
+
+    let o = jot(&home, &["rm", "-y", "zzzzz-no-such-command"]);
+    assert!(!o.status.success());
+    let after = std::fs::read_to_string(home.join("notebooks/local/mine.md")).unwrap();
+    assert_eq!(before, after, "the notebook was rewritten anyway");
+}
+
+/// `jot rm docker` used to be rewritten into a *search* for "rm docker",
+/// because the bare-query rewriter did not know `rm` was a subcommand.
+#[test]
+fn rm_is_a_subcommand_not_a_search_term() {
+    let home = temp_home("rm-bare");
+    jot(&home, &["doctor"]);
+    let help = stdout(&jot(&home, &["rm", "--help"]));
+    assert!(
+        help.contains("Delete") || help.contains("delete"),
+        "rm did not reach its own subcommand:\n{help}"
+    );
+}
+
+// ─────────────────────── multi-line commands ───────────────────────
+
+/// About one built-in entry in ten spans several lines. The widget contract is
+/// that stdout carries the command verbatim; the shells rejoin it from there.
+#[test]
+fn a_multi_line_command_reaches_stdout_with_its_newlines() {
+    let home = temp_home("multiline");
+    jot(&home, &["new", "mine"]);
+    let nb = home.join("notebooks/local/mine.md");
+    let mut text = std::fs::read_to_string(&nb).unwrap_or_default();
+    text.push_str("\n## Two exports\n\n```sh\nexport A=1\nexport B=2\n```\n");
+    std::fs::write(&nb, text).unwrap();
+
+    let o = jot(&home, &["pick", "--query", "Two exports", "--first"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert_eq!(
+        stdout(&o).trim_end(),
+        "export A=1\nexport B=2",
+        "the newline was lost between the notebook and stdout"
     );
 }

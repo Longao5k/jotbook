@@ -24,7 +24,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # arboard 在 Linux 上要 xcb 头文件
+      # arboard needs the xcb headers on Linux
       - name: Install Linux clipboard deps
         if: runner.os == 'Linux'
         run: |
@@ -64,6 +64,34 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # 笔记本的校验测试不需要剪贴板，只跑 core 就够，PR 反馈更快
+      # The notebook checks need no clipboard, so core alone is enough - and faster
       - name: Validate every builtin notebook
         run: "cargo test -p jot-core builtin::"
+
+  shells:
+    name: shell integration parses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install the shells
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh fish libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: Build
+        run: cargo build -p jot-cli
+
+      # The unit tests assert on these scripts as strings. Only the real parsers
+      # can tell you they are valid shell - a stray brace ships a broken `jot
+      # init` to everyone using that shell, and nothing else would catch it.
+      - name: Each generated script is valid for its shell
+        run: |
+          set -euo pipefail
+          jot=./target/debug/jot
+          $jot init bash | bash -n
+          $jot init zsh  | zsh -n
+          $jot init fish | fish --no-execute
+          echo "bash, zsh and fish all parse their own script"

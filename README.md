@@ -110,7 +110,8 @@ jot                                                      # go
 | `jot import text -n <name>` | ...into a notebook of your choosing |
 | `jot ls` | List every entry |
 | `jot notebooks` | List the notebooks and the `@name` to filter by |
-| `jot edit [notebook]` | Open in `$EDITOR` |
+| `jot edit [notebook]` | Open in `$EDITOR`, on the line the command sits on |
+| `jot rm [words]` | Delete one of your own entries |
 | `jot new <name>` | Create a notebook |
 | `jot use <profile>` | Switch profile |
 | `jot profile set <k> <v>` | Set a profile variable |
@@ -123,6 +124,18 @@ jot                                                      # go
 | `jot doctor` | Self-check |
 | `jot path` | Print the data directory |
 | `jot pick -q "<term>" --first` | No UI, best match straight to stdout (for scripts) |
+
+
+### Keys
+
+| Key | |
+|---|---|
+| <kbd>↑</kbd> <kbd>↓</kbd> | Move |
+| <kbd>Enter</kbd> | Use the selected entry |
+| <kbd>Ctrl</kbd>+<kbd>B</kbd> | Back one screen, while filling in variables |
+| <kbd>Esc</kbd> | Quit, wherever you are |
+| <kbd>Ctrl</kbd>+<kbd>E</kbd> | Open the entry in `$EDITOR` |
+| `@notebook` `#tag` | Narrow the list, typed into the search box |
 
 ## Writing notebooks
 

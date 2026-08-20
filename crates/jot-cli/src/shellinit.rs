@@ -86,14 +86,23 @@ Set-PSReadLineKeyHandler -Chord 'Alt+j' -ScriptBlock {{ Invoke-JotWidget }}
 fn bash(key: &str) -> String {
     format!(
         r#"# jot shell integration (bash)
-__jot_widget() {{
-  local out
-  out=$(JOT_WIDGET=1 jot pick --widget --line "$READLINE_LINE" </dev/tty) || return
-  [ -z "$out" ] && return
-  READLINE_LINE="$out"
-  READLINE_POINT=${{#READLINE_LINE}}
-}}
-bind -x '"{key}": __jot_widget'
+
+# READLINE_LINE arrived in bash 4.0, and without it a key binding has no way to
+# put anything on the prompt. macOS still ships 3.2 as /bin/bash, so say what
+# happened rather than binding a key that silently does nothing.
+if [ "${{BASH_VERSINFO[0]:-0}}" -lt 4 ]; then
+  echo "jot: the key binding needs bash 4.0 or newer (this is bash $BASH_VERSION)" >&2
+  echo "jot: everything else still works - run 'jot' to pick a command" >&2
+else
+  __jot_widget() {{
+    local out
+    out=$(JOT_WIDGET=1 jot pick --widget --line "$READLINE_LINE" </dev/tty) || return
+    [ -z "$out" ] && return
+    READLINE_LINE="$out"
+    READLINE_POINT=${{#READLINE_LINE}}
+  }}
+  bind -x '"{key}": __jot_widget'
+fi
 "#
     )
 }
@@ -119,7 +128,11 @@ fn fish(key: &str) -> String {
     format!(
         r#"# jot shell integration (fish)
 function __jot_widget
-    set -l out (JOT_WIDGET=1 jot pick --widget --line (commandline) 2>/dev/tty)
+    # `string collect` keeps the output as one value. Without it fish splits a
+    # command substitution on newlines, and a two-line command comes back as two
+    # list elements that get rejoined with a space - a different command from
+    # the one that was picked. Roughly one entry in ten spans several lines.
+    set -l out (JOT_WIDGET=1 jot pick --widget --line (commandline) </dev/tty | string collect)
     or return
     test -z "$out"; and return
     commandline -r -- $out
@@ -127,4 +140,95 @@ end
 bind {key} __jot_widget
 "#
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_advertised_shell_produces_a_script() {
+        for s in SHELLS {
+            let script = script(s, None).unwrap_or_else(|| panic!("{s} advertised but unhandled"));
+            assert!(script.contains("jot"), "{s} script never invokes jot");
+        }
+        assert!(script("tcsh", None).is_none());
+    }
+
+    /// The picker draws on the terminal device and reads keys from stdin, so
+    /// every POSIX widget has to hand it the tty explicitly - the shell may
+    /// well have stdin on a pipe.
+    #[test]
+    fn posix_widgets_give_the_picker_the_terminal() {
+        for s in ["bash", "zsh", "fish"] {
+            let script = script(s, None).unwrap();
+            assert!(
+                script.contains("</dev/tty"),
+                "{s} never redirects stdin from the tty:\n{script}"
+            );
+        }
+    }
+
+    /// fish splits command substitution on newlines. `string collect` is what
+    /// stops a two-line command from arriving as two arguments.
+    #[test]
+    fn fish_keeps_a_multi_line_command_in_one_piece() {
+        let script = script("fish", None).unwrap();
+        assert!(script.contains("string collect"), "{script}");
+    }
+
+    /// bash 3.2 - still /bin/bash on macOS - has no READLINE_LINE at all. A key
+    /// that does nothing with no explanation is the worst possible outcome.
+    #[test]
+    fn bash_says_something_when_it_is_too_old_to_bind() {
+        let script = script("bash", None).unwrap();
+        assert!(
+            script.contains("BASH_VERSINFO"),
+            "no version guard:\n{script}"
+        );
+        assert!(
+            script.contains("needs bash 4.0"),
+            "no explanation:\n{script}"
+        );
+    }
+
+    /// PowerShell hands back native stdout as an array of lines; joining it
+    /// with a space would silently rewrite the command.
+    #[test]
+    fn powershell_rejoins_the_lines_it_split() {
+        let script = script("powershell", None).unwrap();
+        assert!(script.contains(r#"-join "`n""#), "{script}");
+    }
+
+    /// Redirecting stderr into the pipeline once broke the picker outright:
+    /// jot saw a pipe and refused to draw. Nothing may put it back.
+    ///
+    /// Comments are skipped - every one of these scripts is allowed to explain
+    /// why it does not do this, and one of them does.
+    #[test]
+    fn no_widget_captures_stderr() {
+        for s in SHELLS {
+            let script = script(s, None).unwrap();
+            for (n, line) in script.lines().enumerate() {
+                if line.trim_start().starts_with('#') {
+                    continue;
+                }
+                assert!(
+                    !line.contains("2>&1") && !line.contains("2>/dev/tty"),
+                    "{s}:{} redirects stderr: {line:?}",
+                    n + 1
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_custom_key_reaches_the_binding() {
+        assert!(script("bash", Some(r"\C-t")).unwrap().contains(r"\C-t"));
+        assert!(script("zsh", Some("^T")).unwrap().contains("^T"));
+        assert!(script("fish", Some("\\ct")).unwrap().contains("\\ct"));
+        assert!(script("powershell", Some("Ctrl+t"))
+            .unwrap()
+            .contains("Ctrl+t"));
+    }
 }

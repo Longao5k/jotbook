@@ -19,7 +19,7 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
@@ -82,9 +82,12 @@ impl Drop for Ui {
 ///
 /// Esc means leave entirely - that is what people expect of it, and taking
 /// that away was a mistake. Ctrl+B is the separate, explicit way back.
+///
+/// Generic over the answer because the multi-select hands back indices rather
+/// than a string, and "backed out" versus "left" is the same distinction there.
 #[derive(Debug)]
-pub enum Answer {
-    Value(String),
+pub enum Answer<T = String> {
+    Value(T),
     Back,
     Cancel,
 }
@@ -321,6 +324,284 @@ pub(crate) fn draw_picker(
     f.render_widget(help, chunks[2]);
 }
 
+/// The command being filled in, shown above every question.
+fn context_box(f: &mut Frame, area: Rect, context: &str) {
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            clamp_line(context, area.width.saturating_sub(4) as usize),
+            Style::default().fg(Color::Gray),
+        ))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(DIM))
+                .title(Span::styled(
+                    t!(" 命令 ", " command "),
+                    Style::default().fg(DIM),
+                )),
+        ),
+        area,
+    );
+}
+
+/// The line someone is typing into, with the question as its title.
+fn input_box(f: &mut Frame, area: Rect, label: &str, input: &str) {
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("› ", Style::default().fg(ACCENT)),
+            Span::raw(input),
+            Span::styled("▏", Style::default().fg(ACCENT)),
+        ]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(ACCENT))
+                .title(Span::styled(
+                    format!(" {label} "),
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                )),
+        ),
+        area,
+    );
+}
+
+/// The key hints along the bottom.
+fn help_bar(f: &mut Frame, area: Rect, text: &str) {
+    f.render_widget(
+        Paragraph::new(Span::styled(text, Style::default().fg(DIM))).block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(DIM)),
+        ),
+        area,
+    );
+}
+
+/// Rendering for the "pick a value" question. Free for the same reason as
+/// `draw_picker`: a test can assert on what it puts on the screen.
+pub(crate) fn draw_ask_choice(
+    f: &mut Frame,
+    context: &str,
+    label: &str,
+    input: &str,
+    hits: &[&Choice],
+    custom: bool,
+    state: &mut ListState,
+) {
+    let area = f.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(3),
+            Constraint::Length(2),
+        ])
+        .split(area);
+
+    context_box(f, chunks[0], context);
+    input_box(f, chunks[1], label, input);
+
+    let mut items: Vec<ListItem> = Vec::new();
+    if custom {
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled(
+                t!("使用输入的值  ", "use what you typed  "),
+                Style::default().fg(WARN),
+            ),
+            Span::raw(input.to_string()),
+        ])));
+    }
+    items.extend(hits.iter().map(|c| {
+        ListItem::new(Line::from(clamp_line(
+            &c.display,
+            chunks[2].width.saturating_sub(4) as usize,
+        )))
+    }));
+    f.render_stateful_widget(
+        List::new(items)
+            .highlight_style(Style::default().bg(Color::Rgb(30, 60, 62)))
+            .highlight_symbol("❯ "),
+        chunks[2],
+        state,
+    );
+
+    help_bar(
+        f,
+        chunks[3],
+        &t!(
+            "输入筛选或直接键入值   ↑↓ 选择   ⏎ 确定   ^B 上一步   esc 退出",
+            "type to filter or enter a value   up/down move   enter confirm   ^B back   esc quit"
+        ),
+    );
+}
+
+/// Rendering for the free-text question.
+pub(crate) fn draw_ask_text(f: &mut Frame, context: &str, label: &str, input: &str) {
+    let area = f.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(2),
+        ])
+        .split(area);
+
+    context_box(f, chunks[0], context);
+    input_box(f, chunks[1], label, input);
+    help_bar(
+        f,
+        chunks[3],
+        &t!(
+            "⏎ 确定   ^B 上一步   esc 退出",
+            "enter confirm   ^B back   esc quit"
+        ),
+    );
+}
+
+/// A headline, the thing being decided about, and the keys. Shared by the
+/// dangerous-command confirmation and by `jot rm`, which ask the same question
+/// about different subjects.
+pub(crate) fn draw_prompt(f: &mut Frame, headline: &str, body: &str, help: &str) {
+    let area = f.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(3),
+            Constraint::Length(2),
+        ])
+        .split(area);
+
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            headline,
+            Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+        ))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(WARN)),
+        ),
+        chunks[0],
+    );
+    f.render_widget(
+        Paragraph::new(body.to_string())
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(DIM)),
+            ),
+        chunks[1],
+    );
+    f.render_widget(
+        Paragraph::new(Span::styled(help, Style::default().fg(DIM))),
+        chunks[2],
+    );
+}
+
+/// Rendering for the second confirmation on a dangerous command.
+pub(crate) fn draw_confirm(f: &mut Frame, command: &str) {
+    draw_prompt(
+        f,
+        &t!(
+            " 这条命令被标记为危险",
+            " This command is marked dangerous"
+        ),
+        command,
+        &t!(
+            "y 放到命令行上   n / ^B 回列表   esc 退出   （jot 不会替你执行）",
+            "y put it on the prompt   n / ^B back to the list   esc quit   (jot never runs it for you)"
+        ),
+    );
+}
+
+/// Rendering for `jot rm`. Deleting cannot be undone by reading the file back,
+/// so it says which file it is about to rewrite.
+pub(crate) fn draw_remove(f: &mut Frame, summary: &str) {
+    draw_prompt(
+        f,
+        &t!(" 删除这条命令？", " Delete this entry?"),
+        summary,
+        &t!(
+            "y 删除   n / ^B 回列表   esc 退出",
+            "y delete   n / ^B back to the list   esc quit"
+        ),
+    );
+}
+
+/// Rendering for the import checklist.
+pub(crate) fn draw_multi_select(
+    f: &mut Frame,
+    title: &str,
+    rows: &[String],
+    checked: &[bool],
+    state: &mut ListState,
+) {
+    let area = f.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(3),
+            Constraint::Length(2),
+        ])
+        .split(area);
+
+    let n = checked.iter().filter(|c| **c).count();
+    let total = rows.len();
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            format!(
+                " {title}   {} ",
+                t!("已选 {n}/{total}", "{n}/{total} selected")
+            ),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(DIM)),
+        ),
+        chunks[0],
+    );
+
+    let width = chunks[1].width.saturating_sub(6) as usize;
+    let items: Vec<ListItem> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let on = checked.get(i).copied().unwrap_or(false);
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    if on { "◼ " } else { "◻ " },
+                    Style::default().fg(if on { ACCENT } else { DIM }),
+                ),
+                Span::raw(clamp_line(r, width)),
+            ]))
+        })
+        .collect();
+    f.render_stateful_widget(
+        List::new(items)
+            .highlight_style(Style::default().bg(Color::Rgb(30, 60, 62)))
+            .highlight_symbol("❯ "),
+        chunks[1],
+        state,
+    );
+
+    help_bar(
+        f,
+        chunks[2],
+        &t!(
+            "space 勾选   a 全选   ⏎ 导入所选   ^B 上一步   esc 退出",
+            "space toggle   a select all   enter import   ^B back   esc quit"
+        ),
+    );
+}
+
 impl Ui {
     /// The picker.
     pub fn pick(
@@ -441,84 +722,8 @@ impl Ui {
             }
             state.select(if total == 0 { None } else { Some(cursor) });
 
-            self.term.draw(|f| {
-                let area = f.area();
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(3),
-                        Constraint::Length(3),
-                        Constraint::Min(3),
-                        Constraint::Length(2),
-                    ])
-                    .split(area);
-
-                f.render_widget(
-                    Paragraph::new(Span::styled(
-                        clamp_line(context, area.width.saturating_sub(4) as usize),
-                        Style::default().fg(Color::Gray),
-                    ))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(DIM))
-                            .title(Span::styled(t!(" 命令 ", " command "), Style::default().fg(DIM))),
-                    ),
-                    chunks[0],
-                );
-
-                f.render_widget(
-                    Paragraph::new(Line::from(vec![
-                        Span::styled("› ", Style::default().fg(ACCENT)),
-                        Span::raw(&input),
-                        Span::styled("▏", Style::default().fg(ACCENT)),
-                    ]))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(ACCENT))
-                            .title(Span::styled(
-                                format!(" {label} "),
-                                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-                            )),
-                    ),
-                    chunks[1],
-                );
-
-                let mut items: Vec<ListItem> = Vec::new();
-                if custom {
-                    items.push(ListItem::new(Line::from(vec![
-                        Span::styled(t!("使用输入的值  ", "use what you typed  "), Style::default().fg(WARN)),
-                        Span::raw(input.clone()),
-                    ])));
-                }
-                items.extend(hits.iter().map(|c| {
-                    ListItem::new(Line::from(clamp_line(
-                        &c.display,
-                        chunks[2].width.saturating_sub(4) as usize,
-                    )))
-                }));
-                f.render_stateful_widget(
-                    List::new(items)
-                        .highlight_style(Style::default().bg(Color::Rgb(30, 60, 62)))
-                        .highlight_symbol("❯ "),
-                    chunks[2],
-                    &mut state,
-                );
-
-                f.render_widget(
-                    Paragraph::new(Span::styled(
-                        t!("输入筛选或直接键入值   ↑↓ 选择   ⏎ 确定   esc 取消", "type to filter or enter a value   up/down move   enter confirm   esc cancel"),
-                        Style::default().fg(DIM),
-                    ))
-                    .block(
-                        Block::default()
-                            .borders(Borders::TOP)
-                            .border_style(Style::default().fg(DIM)),
-                    ),
-                    chunks[3],
-                );
-            })?;
+            self.term
+                .draw(|f| draw_ask_choice(f, context, label, &input, &hits, custom, &mut state))?;
 
             let Event::Key(k) = event::read()? else {
                 continue;
@@ -575,64 +780,8 @@ impl Ui {
     ) -> Result<Answer> {
         let mut input = default.unwrap_or("").to_string();
         loop {
-            self.term.draw(|f| {
-                let area = f.area();
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(3),
-                        Constraint::Length(3),
-                        Constraint::Min(0),
-                        Constraint::Length(2),
-                    ])
-                    .split(area);
-
-                f.render_widget(
-                    Paragraph::new(Span::styled(
-                        clamp_line(context, area.width.saturating_sub(4) as usize),
-                        Style::default().fg(Color::Gray),
-                    ))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(DIM))
-                            .title(Span::styled(
-                                t!(" 命令 ", " command "),
-                                Style::default().fg(DIM),
-                            )),
-                    ),
-                    chunks[0],
-                );
-                f.render_widget(
-                    Paragraph::new(Line::from(vec![
-                        Span::styled("› ", Style::default().fg(ACCENT)),
-                        Span::raw(&input),
-                        Span::styled("▏", Style::default().fg(ACCENT)),
-                    ]))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(ACCENT))
-                            .title(Span::styled(
-                                format!(" {label} "),
-                                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-                            )),
-                    ),
-                    chunks[1],
-                );
-                f.render_widget(
-                    Paragraph::new(Span::styled(
-                        t!("⏎ 确定   esc 取消", "enter confirm   esc cancel"),
-                        Style::default().fg(DIM),
-                    ))
-                    .block(
-                        Block::default()
-                            .borders(Borders::TOP)
-                            .border_style(Style::default().fg(DIM)),
-                    ),
-                    chunks[3],
-                );
-            })?;
+            self.term
+                .draw(|f| draw_ask_text(f, context, label, &input))?;
 
             let Event::Key(k) = event::read()? else {
                 continue;
@@ -658,51 +807,21 @@ impl Ui {
 
     /// Second confirmation for a dangerous command.
     pub fn confirm(&mut self, command: &str) -> Result<Answer> {
-        loop {
-            self.term.draw(|f| {
-                let area = f.area();
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(3),
-                        Constraint::Min(3),
-                        Constraint::Length(2),
-                    ])
-                    .split(area);
+        self.yes_no(|f| draw_confirm(f, command))
+    }
 
-                f.render_widget(
-                    Paragraph::new(Span::styled(
-                        t!(" 这条命令被标记为危险", " This command is marked dangerous"),
-                        Style::default().fg(WARN).add_modifier(Modifier::BOLD),
-                    ))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(WARN)),
-                    ),
-                    chunks[0],
-                );
-                f.render_widget(
-                    Paragraph::new(command.to_string())
-                        .wrap(Wrap { trim: false })
-                        .block(
-                            Block::default()
-                                .borders(Borders::ALL)
-                                .border_style(Style::default().fg(DIM)),
-                        ),
-                    chunks[1],
-                );
-                f.render_widget(
-                    Paragraph::new(Span::styled(
-                        t!(
-                            "y 确认放到命令行上   n / esc 取消   （jot 不会替你执行）",
-                            "y put it on the prompt   n / esc cancel   (jot never runs it for you)"
-                        ),
-                        Style::default().fg(DIM),
-                    )),
-                    chunks[2],
-                );
-            })?;
+    /// Confirmation before `jot rm` rewrites a notebook.
+    pub fn confirm_remove(&mut self, summary: &str) -> Result<Answer> {
+        self.yes_no(|f| draw_remove(f, summary))
+    }
+
+    /// The y/n key loop both confirmations share.
+    ///
+    /// `n` goes back rather than out: someone who says no to one entry almost
+    /// always wants the list again, not to lose the session.
+    fn yes_no(&mut self, draw: impl Fn(&mut Frame)) -> Result<Answer> {
+        loop {
+            self.term.draw(|f| draw(f))?;
 
             let Event::Key(k) = event::read()? else {
                 continue;
@@ -727,78 +846,16 @@ impl Ui {
         }
     }
 
-    /// Multi-select, used by history import.
-    pub fn multi_select(&mut self, title: &str, rows: &[String]) -> Result<Option<Vec<usize>>> {
+    /// Multi-select, used by both importers.
+    pub fn multi_select(&mut self, title: &str, rows: &[String]) -> Result<Answer<Vec<usize>>> {
         let mut checked = vec![false; rows.len()];
         let mut cursor = 0usize;
         let mut state = ListState::default();
 
         loop {
             state.select(Some(cursor));
-            self.term.draw(|f| {
-                let area = f.area();
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(3),
-                        Constraint::Min(3),
-                        Constraint::Length(2),
-                    ])
-                    .split(area);
-
-                let n = checked.iter().filter(|c| **c).count();
-                f.render_widget(
-                    Paragraph::new(Span::styled(
-                        format!(" {title}   已选 {n}/{} ", rows.len()),
-                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-                    ))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(DIM)),
-                    ),
-                    chunks[0],
-                );
-
-                let width = chunks[1].width.saturating_sub(6) as usize;
-                let items: Vec<ListItem> = rows
-                    .iter()
-                    .enumerate()
-                    .map(|(i, r)| {
-                        let mark = if checked[i] { "◼ " } else { "◻ " };
-                        ListItem::new(Line::from(vec![
-                            Span::styled(
-                                mark,
-                                Style::default().fg(if checked[i] { ACCENT } else { DIM }),
-                            ),
-                            Span::raw(clamp_line(r, width)),
-                        ]))
-                    })
-                    .collect();
-                f.render_stateful_widget(
-                    List::new(items)
-                        .highlight_style(Style::default().bg(Color::Rgb(30, 60, 62)))
-                        .highlight_symbol("❯ "),
-                    chunks[1],
-                    &mut state,
-                );
-
-                f.render_widget(
-                    Paragraph::new(Span::styled(
-                        t!(
-                            "space 勾选   a 全选   ⏎ 导入所选   esc 取消",
-                            "space toggle   a select all   enter import   esc cancel"
-                        ),
-                        Style::default().fg(DIM),
-                    ))
-                    .block(
-                        Block::default()
-                            .borders(Borders::TOP)
-                            .border_style(Style::default().fg(DIM)),
-                    ),
-                    chunks[2],
-                );
-            })?;
+            self.term
+                .draw(|f| draw_multi_select(f, title, rows, &checked, &mut state))?;
 
             let Event::Key(k) = event::read()? else {
                 continue;
@@ -806,13 +863,13 @@ impl Ui {
             if k.kind != KeyEventKind::Press {
                 continue;
             }
+            let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
             match k.code {
-                KeyCode::Esc => return Ok(None),
-                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
-                    return Ok(None)
-                }
+                KeyCode::Esc => return Ok(Answer::Cancel),
+                KeyCode::Char('c') if ctrl => return Ok(Answer::Cancel),
+                KeyCode::Char('b') if ctrl => return Ok(Answer::Back),
                 KeyCode::Enter => {
-                    return Ok(Some(
+                    return Ok(Answer::Value(
                         checked
                             .iter()
                             .enumerate()
@@ -1111,5 +1168,220 @@ mod query_tests {
         assert_eq!(q.notebooks, ["docker"]);
         assert_eq!(q.tags, ["deploy"]);
         assert_eq!(q.terms, ["restart", "api"]);
+    }
+}
+
+/// The four screens the picker hands off to.
+///
+/// These went untested for a long time while the picker beside them did not,
+/// and the difference showed: the back key was missing from every help line and
+/// the checklist counted in Chinese no matter what language was set. Neither
+/// survives a render assertion.
+#[cfg(test)]
+mod question_screens {
+    use super::*;
+    use jot_core::i18n::{self, Lang};
+    use ratatui::backend::TestBackend;
+    use std::sync::Mutex;
+
+    /// The language is process-wide, so the tests that switch it take turns.
+    static LANG_LOCK: Mutex<()> = Mutex::new(());
+
+    fn dump(w: u16, h: u16, draw: impl FnOnce(&mut Frame)) -> String {
+        use unicode_width::UnicodeWidthStr;
+
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(draw).unwrap();
+        let buf = term.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buf.area.height {
+            let mut x = 0u16;
+            while x < buf.area.width {
+                let sym = buf[(x, y)].symbol();
+                out.push_str(sym);
+                x += UnicodeWidthStr::width(sym).max(1) as u16;
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    fn choices(vals: &[&str]) -> Vec<Choice> {
+        vals.iter()
+            .map(|v| Choice {
+                value: v.to_string(),
+                display: v.to_string(),
+            })
+            .collect()
+    }
+
+    /// Draw all four at a comfortable size and hand back the text of each.
+    fn all_four(w: u16, h: u16) -> Vec<(&'static str, String)> {
+        let opts = choices(&["api", "worker"]);
+        let refs: Vec<&Choice> = opts.iter().collect();
+        let rows = vec!["adb devices".to_string(), "adb shell".to_string()];
+        vec![
+            (
+                "ask_choice",
+                dump(w, h, |f| {
+                    let mut st = ListState::default();
+                    st.select(Some(0));
+                    draw_ask_choice(
+                        f,
+                        "systemctl restart X",
+                        "service",
+                        "",
+                        &refs,
+                        false,
+                        &mut st,
+                    )
+                }),
+            ),
+            (
+                "ask_text",
+                dump(w, h, |f| draw_ask_text(f, "curl X", "url", "")),
+            ),
+            ("confirm", dump(w, h, |f| draw_confirm(f, "rm -rf /tmp/x"))),
+            (
+                "multi_select",
+                dump(w, h, |f| {
+                    let mut st = ListState::default();
+                    st.select(Some(0));
+                    draw_multi_select(f, "Import", &rows, &[true, false], &mut st)
+                }),
+            ),
+        ]
+    }
+
+    /// Ctrl+B shipped working but unadvertised, which is the same as not
+    /// shipping it. Every screen that accepts it has to say so.
+    #[test]
+    fn every_screen_that_takes_the_back_key_says_so() {
+        let _g = LANG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        for lang in [Lang::En, Lang::Zh] {
+            i18n::set(lang);
+            for (name, text) in all_four(100, 24) {
+                assert!(
+                    text.contains("^B"),
+                    "{name} does not mention the back key in {lang:?}:\n{text}"
+                );
+            }
+        }
+        i18n::set(Lang::En);
+    }
+
+    /// Esc is the way out and has to stay visible next to it.
+    #[test]
+    fn every_screen_still_offers_esc() {
+        let _g = LANG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        i18n::set(Lang::En);
+        for (name, text) in all_four(100, 24) {
+            assert!(text.contains("esc"), "{name} lost its esc hint:\n{text}");
+        }
+    }
+
+    /// The checklist header was `format!("已选 {n}/{}")` with no `t!` around it,
+    /// so an English user counted their selection in Chinese.
+    #[test]
+    fn the_checklist_counts_in_the_active_language() {
+        let _g = LANG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let rows = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let draw = |f: &mut Frame| {
+            let mut st = ListState::default();
+            st.select(Some(0));
+            draw_multi_select(f, "Import", &rows, &[true, true, false], &mut st)
+        };
+
+        i18n::set(Lang::En);
+        let en = dump(80, 12, draw);
+        assert!(en.contains("2/3 selected"), "no English count:\n{en}");
+        assert!(!en.contains('已'), "Chinese leaked into English:\n{en}");
+
+        i18n::set(Lang::Zh);
+        let zh = dump(80, 12, draw);
+        assert!(zh.contains("已选 2/3"), "no Chinese count:\n{zh}");
+
+        i18n::set(Lang::En);
+    }
+
+    /// The one affordance that lets someone name a notebook that does not exist
+    /// yet. Losing it would make `jot import text` unable to start a notebook.
+    #[test]
+    fn a_typed_value_that_is_not_on_the_list_is_offered_as_is() {
+        let _g = LANG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        i18n::set(Lang::En);
+        let opts = choices(&["my", "docker"]);
+        let refs: Vec<&Choice> = opts.iter().collect();
+        let text = dump(80, 16, |f| {
+            let mut st = ListState::default();
+            st.select(Some(0));
+            draw_ask_choice(f, "ctx", "notebook", "brand-new", &refs, true, &mut st)
+        });
+        assert!(text.contains("use what you typed"), "{text}");
+        assert!(text.contains("brand-new"), "{text}");
+    }
+
+    /// The promise the whole tool rests on, printed where it is read.
+    #[test]
+    fn the_confirm_screen_says_jot_will_not_run_it() {
+        let _g = LANG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        i18n::set(Lang::En);
+        let text = dump(90, 12, |f| draw_confirm(f, "rm -rf /var/lib/data"));
+        assert!(text.contains("rm -rf /var/lib/data"), "{text}");
+        assert!(text.contains("never runs it"), "{text}");
+        assert!(text.contains("dangerous"), "{text}");
+    }
+
+    /// The tick marks are the only way to tell what is selected.
+    #[test]
+    fn the_checklist_marks_what_is_ticked() {
+        let rows = vec!["first".to_string(), "second".to_string()];
+        let text = dump(60, 10, |f| {
+            let mut st = ListState::default();
+            st.select(Some(1));
+            draw_multi_select(f, "T", &rows, &[true, false], &mut st)
+        });
+        let first = text.lines().find(|l| l.contains("first")).unwrap();
+        let second = text.lines().find(|l| l.contains("second")).unwrap();
+        assert!(first.contains('◼'), "ticked row not marked: {first:?}");
+        assert!(second.contains('◻'), "unticked row marked: {second:?}");
+        assert!(second.contains('❯'), "cursor not on row two: {second:?}");
+    }
+
+    /// A CJK label is two columns per character; the box has to clip it with an
+    /// ellipsis rather than let the terminal cut it off mid-frame.
+    #[test]
+    fn a_long_cjk_command_is_clipped_with_an_ellipsis() {
+        let long = "sudo systemctl restart 一个非常非常非常长的服务名字用来把这一行撑满";
+        let text = dump(40, 10, |f| draw_ask_text(f, long, "service", ""));
+        assert!(text.contains('…'), "not truncated:\n{text}");
+        for line in text.lines() {
+            use unicode_width::UnicodeWidthStr;
+            assert!(
+                line.width() <= 40,
+                "line is {} columns wide, past the 40 the terminal has: {line:?}",
+                line.width()
+            );
+        }
+    }
+
+    /// Someone will open one of these in a split pane. None of them may panic.
+    #[test]
+    fn extreme_terminal_sizes_do_not_panic() {
+        for (w, h) in [(1, 1), (3, 2), (10, 4), (20, 5), (200, 60), (400, 3)] {
+            for (name, _) in all_four(w, h) {
+                let _ = name; // drawing without panicking is the assertion
+            }
+        }
+    }
+
+    /// An empty checklist happens whenever a paste yields nothing usable.
+    #[test]
+    fn an_empty_checklist_does_not_panic() {
+        let _ = dump(40, 10, |f| {
+            let mut st = ListState::default();
+            st.select(Some(0));
+            draw_multi_select(f, "empty", &[], &[], &mut st)
+        });
     }
 }

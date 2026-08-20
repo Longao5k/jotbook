@@ -12,7 +12,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use jot_core::builtin;
 use jot_core::capture;
-use jot_core::notebook::Entry;
+use jot_core::notebook::{self, Entry};
 use jot_core::resolve::{self, Ask};
 use jot_core::t;
 use jot_core::vars;
@@ -32,6 +32,8 @@ const SUBCOMMANDS: &[&str] = &[
     "list",
     "init",
     "edit",
+    "rm",
+    "delete",
     "new",
     "use",
     "profile",
@@ -118,6 +120,15 @@ enum Cmd {
     },
     /// Open a notebook in your editor
     Edit { notebook: Option<String> },
+    /// Delete one of your own entries
+    #[command(alias = "delete")]
+    Rm {
+        /// Narrow the picker, the same way `jot <words>` does
+        query: Vec<String>,
+        /// Delete the top match without asking. For scripts.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     /// Create a personal notebook
     New { name: String },
     /// Switch profile
@@ -298,6 +309,7 @@ fn run() -> Result<i32> {
         Some(Cmd::Ls { notebook }) => cmd_ls(notebook.as_deref()),
         Some(Cmd::Init { shell, key }) => cmd_init(&shell, key.as_deref()),
         Some(Cmd::Edit { notebook }) => cmd_edit(notebook.as_deref()),
+        Some(Cmd::Rm { query, yes }) => cmd_rm(&query.join(" "), yes),
         Some(Cmd::New { name }) => cmd_new(&name),
         Some(Cmd::Use { profile }) => cmd_use(&profile),
         Some(Cmd::Profile { action }) => cmd_profile(action),
@@ -372,9 +384,9 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
     let mut ui = Ui::new()?;
     let mut back_to = initial.to_string();
 
-    // Esc steps back one screen rather than abandoning everything. Filling in
-    // four variables and mistyping the last one should not cost you the other
-    // three, and it should certainly not cost you the search you just typed.
+    // Ctrl+B steps back one screen; Esc leaves. Filling in four variables and
+    // mistyping the last one should not cost you the other three, and it
+    // should certainly not cost you the search you just typed.
     let (entry, final_cmd) = 'pick: loop {
         let idx = match ui.pick(&entries, &mut back_to, &usage)? {
             Picked::Cancel => {
@@ -485,29 +497,13 @@ fn cmd_pick_first(
     usage: &mut Usage,
     paths: &Paths,
 ) -> Result<i32> {
-    use fuzzy_matcher::skim::SkimMatcherV2;
-    use fuzzy_matcher::FuzzyMatcher;
-
     if query.trim().is_empty() {
         bail!(
             "{}",
             t!("--first 需要一个搜索词", "--first needs a search term")
         );
     }
-    let matcher = SkimMatcherV2::default().ignore_case();
-    let best = entries
-        .iter()
-        .filter_map(|e| {
-            let hay = e.haystack();
-            let mut total = 0i64;
-            for part in query.split_whitespace() {
-                total += matcher.fuzzy_match(&hay, part)?;
-            }
-            Some((*e, total))
-        })
-        .max_by_key(|(_, s)| *s)
-        .map(|(e, _)| e);
-    let Some(entry) = best else {
+    let Some(entry) = best_match(entries, query) else {
         bail!(
             "{}",
             t!("没有匹配 «{query}» 的条目", "nothing matches «{query}»")
@@ -653,8 +649,8 @@ fn cmd_save(args: SaveArgs) -> Result<i32> {
 
     // With a title given there is nothing to ask, so this stays scriptable
     // and usable from a shell that cannot host a picker.
-    let (title, desc) = match title {
-        Some(t) if !t.trim().is_empty() => (t, desc.unwrap_or_default()),
+    let (title, desc, notebook) = match title {
+        Some(t) if !t.trim().is_empty() => (t, desc.unwrap_or_default(), notebook),
         _ => {
             let mut ui = Ui::new()?;
             let Answer::Value(t) = ui.ask_text(
@@ -678,8 +674,17 @@ fn cmd_save(args: SaveArgs) -> Result<i32> {
                 Answer::Value(d) => d,
                 _ => String::new(),
             };
+            // Same question the importers ask. Defaulting silently to my.md is
+            // how a notebook someone deliberately created stays empty.
+            let nb = match notebook {
+                Some(n) => Some(n),
+                None => ask_notebook(&mut ui, &paths, &parameterized)?,
+            };
             drop(ui);
-            (t, d)
+            let Some(nb) = nb else {
+                return Ok(EXIT_CANCEL);
+            };
+            (t, d, Some(nb))
         }
     };
 
@@ -775,6 +780,38 @@ fn ask_notebook(ui: &mut Ui, paths: &Paths, context: &str) -> Result<Option<Stri
 
 // ─────────────────────────── import ───────────────────────────
 
+/// Ask where to put things, then which ones - with Ctrl+B walking back between
+/// the two. `None` means the user left.
+///
+/// Both importers do exactly this, and doing it in one place is what keeps the
+/// back key working the same way in both.
+fn choose_and_select(
+    ui: &mut Ui,
+    paths: &Paths,
+    notebook: Option<&str>,
+    context: &str,
+    title: &str,
+    rows: &[String],
+) -> Result<Option<(String, Vec<usize>)>> {
+    loop {
+        // A notebook given on the command line settles the question; there is
+        // then nothing behind the checklist to go back to.
+        let target = match notebook {
+            Some(n) => n.to_string(),
+            None => match ask_notebook(ui, paths, context)? {
+                Some(n) => n,
+                None => return Ok(None),
+            },
+        };
+        match ui.multi_select(title, rows)? {
+            Answer::Value(picked) => return Ok(Some((target, picked))),
+            Answer::Cancel => return Ok(None),
+            Answer::Back if notebook.is_some() => return Ok(None),
+            Answer::Back => continue,
+        }
+    }
+}
+
 fn cmd_import_history(top: usize, notebook: Option<&str>) -> Result<i32> {
     let paths = Paths::discover()?;
     let cfg = Config::load(&paths);
@@ -804,27 +841,24 @@ fn cmd_import_history(top: usize, notebook: Option<&str>) -> Result<i32> {
         .collect();
 
     let mut ui = Ui::new()?;
-    let target = match notebook {
-        Some(n) => Some(n.to_string()),
-        None => ask_notebook(&mut ui, &paths, &format!("{} 条", items.len()))?,
-    };
-    let Some(target) = target else {
-        drop(ui);
-        return Ok(EXIT_CANCEL);
-    };
-    let picked = ui.multi_select(
+    let context = t!("{} 条命令", "{} commands", items.len()).into_owned();
+    let Some((target, picked)) = choose_and_select(
+        &mut ui,
+        &paths,
+        notebook,
+        &context,
         t!(
             "从 shell 历史导入（按使用频次排序）",
             "Import from shell history (most used first)"
         )
         .as_ref(),
         &rows,
-    )?;
-    drop(ui);
-
-    let Some(picked) = picked else {
+    )?
+    else {
+        drop(ui);
         return Ok(EXIT_CANCEL);
     };
+    drop(ui);
     if picked.is_empty() {
         eprintln!("{}", t!("jot: 没有选中任何命令", "jot: nothing selected"));
         return Ok(0);
@@ -950,15 +984,12 @@ fn cmd_import_text(file: Option<&str>, notebook: Option<&str>, dry_run: bool) ->
     }
 
     let mut ui = Ui::new()?;
-    let target = match notebook {
-        Some(n) => Some(n.to_string()),
-        None => ask_notebook(&mut ui, &paths, &format!("{} × {}", source, drafts.len()))?,
-    };
-    let Some(target) = target else {
-        drop(ui);
-        return Ok(EXIT_CANCEL);
-    };
-    let picked = ui.multi_select(
+    let context = t!("{} —— {} 条命令", "{} - {} commands", source, drafts.len()).into_owned();
+    let Some((target, picked)) = choose_and_select(
+        &mut ui,
+        &paths,
+        notebook,
+        &context,
         t!(
             "从{}导入（已归一化，空格勾选）",
             "Import from {} (normalised; space to tick)",
@@ -966,12 +997,12 @@ fn cmd_import_text(file: Option<&str>, notebook: Option<&str>, dry_run: bool) ->
         )
         .as_ref(),
         &rows,
-    )?;
-    drop(ui);
-
-    let Some(picked) = picked else {
+    )?
+    else {
+        drop(ui);
         return Ok(EXIT_CANCEL);
     };
+    drop(ui);
     if picked.is_empty() {
         eprintln!("{}", t!("jot: 没有选中任何命令", "jot: nothing selected"));
         return Ok(0);
@@ -1116,6 +1147,132 @@ fn cmd_edit(notebook: Option<&str>) -> Result<i32> {
         None => builtin::ensure_personal_notebook(&paths)?,
     };
     open_editor(&path)?;
+    Ok(0)
+}
+
+/// The single best match for a query, or `None` if nothing matches.
+fn best_match<'a>(entries: &[&'a Entry], query: &str) -> Option<&'a Entry> {
+    use fuzzy_matcher::skim::SkimMatcherV2;
+    use fuzzy_matcher::FuzzyMatcher;
+
+    let matcher = SkimMatcherV2::default().ignore_case();
+    entries
+        .iter()
+        .filter_map(|e| {
+            let hay = e.haystack();
+            let mut total = 0i64;
+            for part in query.split_whitespace() {
+                total += matcher.fuzzy_match(&hay, part)?;
+            }
+            Some((*e, total))
+        })
+        .max_by_key(|(_, s)| *s)
+        .map(|(e, _)| e)
+}
+
+/// Delete an entry from one of the user's own notebooks.
+///
+/// Only local notebooks: a built-in comes back on the next version bump and a
+/// community entry comes back on the next `jot sync`, so deleting either would
+/// be a change that quietly undoes itself.
+fn cmd_rm(query: &str, yes: bool) -> Result<i32> {
+    let paths = Paths::discover()?;
+    builtin::seed_if_missing(&paths)?;
+    let lib = Library::load(&paths)?;
+    let usage = Usage::load(&paths);
+    let entries = lib.entries();
+    if entries.is_empty() {
+        bail!("{}", t!("一条命令都没有", "no commands at all"));
+    }
+
+    // Non-interactive: take the best match, for scripts and for anyone who
+    // already knows exactly what they mean.
+    if yes {
+        if query.trim().is_empty() {
+            bail!(
+                "{}",
+                t!("-y 需要一个搜索词", "-y needs something to search for")
+            );
+        }
+        let entry = best_match(&entries, query).with_context(|| {
+            t!("没有匹配 «{query}» 的条目", "nothing matches «{query}»").into_owned()
+        })?;
+        return remove_entry(&paths, entry);
+    }
+
+    let mut ui = Ui::new()?;
+    let mut back_to = query.to_string();
+    loop {
+        let i = match ui.pick(&entries, &mut back_to, &usage)? {
+            Picked::Cancel => {
+                drop(ui);
+                return Ok(EXIT_CANCEL);
+            }
+            Picked::Edit(i) => {
+                let (path, line) = (entries[i].source.clone(), entries[i].line);
+                drop(ui);
+                open_editor_at(&path, line)?;
+                return Ok(0);
+            }
+            Picked::Entry(i) => i,
+        };
+        let entry = entries[i];
+        let summary = format!(
+            "{}\n\n{}\n\n{}",
+            entry.title,
+            entry.command,
+            t!("来自 {}", "from {}", entry.source.display())
+        );
+        match ui.confirm_remove(&summary)? {
+            Answer::Value(_) => {
+                drop(ui);
+                return remove_entry(&paths, entry);
+            }
+            Answer::Back => continue,
+            Answer::Cancel => {
+                drop(ui);
+                return Ok(EXIT_CANCEL);
+            }
+        }
+    }
+}
+
+/// Rewrite the notebook without `entry`, refusing anything not the user's own.
+fn remove_entry(paths: &Paths, entry: &Entry) -> Result<i32> {
+    let local = paths.local_dir();
+    if !entry.source.starts_with(&local) {
+        bail!(
+            "{}",
+            t!(
+                "«{}» 在 {} 里，那不是你自己的笔记本。\n内置条目升级时会重新装回来，社区来源的 `jot sync` 时也会 —— 删了留不住。\n想改内容用：jot edit {}",
+                "«{}» lives in {}, which is not one of your own notebooks.\nBuilt-in entries come back on upgrade and community ones on `jot sync`, so removing them would not stick.\nTo change it: jot edit {}",
+                entry.title,
+                entry.source.display(),
+                entry.notebook
+            )
+        );
+    }
+
+    let text = std::fs::read_to_string(&entry.source)?;
+    let updated = notebook::without_entry(&text, entry.line).with_context(|| {
+        t!(
+            "在 {} 里定位不到这条命令，文件可能刚被改过。请重试",
+            "could not locate that entry in {}; the file may have just changed. Try again",
+            entry.source.display()
+        )
+        .into_owned()
+    })?;
+    std::fs::write(&entry.source, updated)?;
+
+    eprintln!(
+        "{}",
+        t!(
+            "jot: 已删除 «{}» ← {}",
+            "jot: deleted «{}» from {}",
+            entry.title,
+            entry.source.display()
+        )
+    );
     Ok(0)
 }
 
@@ -1718,7 +1875,38 @@ fn cmd_doctor() -> Result<i32> {
 /// Deliberately does nothing when this is not an interactive session, or when
 /// EDITOR is explicitly set to empty. A script or a test calling `jot new`
 /// should not make a window appear on somebody's screen.
+/// How to tell a given editor to open on a particular line.
+///
+/// Every entry already records the line its command sits on and nothing used
+/// it, so `jot edit` dropped people at the top of a six-hundred-line file and
+/// left them to search. Editors disagree about the spelling; an unrecognised
+/// one just gets the path, which is what used to happen to everyone.
+fn editor_args(editor: &str, path: &Path, line: usize) -> Vec<String> {
+    let name = Path::new(editor.trim())
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    let p = path.display().to_string();
+    match name.as_str() {
+        "code" | "code-insiders" | "codium" | "vscodium" | "cursor" | "windsurf" => {
+            vec!["--goto".into(), format!("{p}:{line}")]
+        }
+        "subl" | "sublime_text" | "hx" | "helix" => vec![format!("{p}:{line}")],
+        "vim" | "nvim" | "vi" | "gvim" | "nano" | "pico" | "emacs" | "emacsclient" | "micro"
+        | "kak" | "joe" => vec![format!("+{line}"), p],
+        "idea" | "pycharm" | "webstorm" | "goland" | "rustrover" | "clion" | "rider" => {
+            vec!["--line".into(), line.to_string(), p]
+        }
+        _ => vec![p],
+    }
+}
+
 fn open_editor(path: &Path) -> Result<()> {
+    open_editor_at(path, 0)
+}
+
+/// Open `path` in the user's editor. `line` of 0 means "wherever you like".
+fn open_editor_at(path: &Path, line: usize) -> Result<()> {
     let editor = std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR"));
     if let Ok(ed) = &editor {
         if ed.trim().is_empty() {
@@ -1729,7 +1917,12 @@ fn open_editor(path: &Path) -> Result<()> {
         return Ok(());
     }
     if let Ok(ed) = editor {
-        Command::new(ed).arg(path).status()?;
+        let args = if line > 0 {
+            editor_args(&ed, path, line)
+        } else {
+            vec![path.display().to_string()]
+        };
+        Command::new(ed).args(args).status()?;
         return Ok(());
     }
     let status = if cfg!(target_os = "windows") {
@@ -1742,13 +1935,70 @@ fn open_editor(path: &Path) -> Result<()> {
     } else {
         Command::new("xdg-open").arg(path).status()
     };
-    status.with_context(|| format!("打不开 {}，设置 $EDITOR 再试", path.display()))?;
+    status.with_context(|| {
+        t!(
+            "打不开 {}，设置 $EDITOR 再试",
+            "could not open {}; set $EDITOR and try again",
+            path.display()
+        )
+        .into_owned()
+    })?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::rewrite_bare_query;
+    use super::{editor_args, rewrite_bare_query, Cli, SUBCOMMANDS};
+    use std::path::Path;
+
+    /// SUBCOMMANDS is maintained by hand beside clap's own list, and a name
+    /// missing from it is not a small bug: `jot rm docker` silently becomes a
+    /// *search* for "rm docker" instead of a deletion. Adding `rm` without
+    /// this list is exactly the mistake that prompted the test.
+    #[test]
+    fn every_real_subcommand_is_known_to_the_bare_query_rewriter() {
+        use clap::CommandFactory;
+
+        let mut missing = Vec::new();
+        for sub in Cli::command().get_subcommands() {
+            for name in std::iter::once(sub.get_name()).chain(sub.get_all_aliases()) {
+                if !SUBCOMMANDS.contains(&name) {
+                    missing.push(name.to_string());
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "these would be treated as search terms: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn editors_are_told_which_line_in_the_spelling_they_understand() {
+        let p = Path::new("/n/my.md");
+        assert_eq!(editor_args("vim", p, 42), ["+42", "/n/my.md"]);
+        assert_eq!(editor_args("nvim", p, 42), ["+42", "/n/my.md"]);
+        assert_eq!(editor_args("code", p, 42), ["--goto", "/n/my.md:42"]);
+        assert_eq!(editor_args("subl", p, 42), ["/n/my.md:42"]);
+        assert_eq!(editor_args("idea", p, 42), ["--line", "42", "/n/my.md"]);
+    }
+
+    /// A full path, and Windows' .exe suffix, both have to resolve to the name.
+    #[test]
+    fn the_editor_is_recognised_by_name_not_by_path() {
+        let p = Path::new("x.md");
+        assert_eq!(
+            editor_args(r"C:\Program Files\Microsoft VS Code\Code.exe", p, 7),
+            ["--goto", "x.md:7"]
+        );
+        assert_eq!(editor_args("/usr/bin/vim", p, 7), ["+7", "x.md"]);
+    }
+
+    /// An editor nobody anticipated gets what it always got: the path.
+    #[test]
+    fn an_unknown_editor_just_gets_the_file() {
+        assert_eq!(editor_args("ed", Path::new("x.md"), 9), ["x.md"]);
+    }
 
     fn rw(args: &[&str]) -> Vec<String> {
         rewrite_bare_query(

@@ -285,7 +285,7 @@ figcaption{
 <div class="wrap">
 
 <header class="mast">
-  <div class="mast-eyebrow">架构设计 · M0–M2 已落地</div>
+  <div class="mast-eyebrow">架构设计稿 · 2026-08-19</div>
   <h1>Jotbook<span class="tld"> / jot</span></h1>
   <p class="thesis">一个存你自己命令的笔记本。<b>它解决的是检索问题，不是生成问题</b> —— 命令你早就知道、早就跑通过，你只是不想再翻一遍聊天记录。</p>
   <div class="meta">
@@ -294,10 +294,29 @@ figcaption{
     <span><b>栈</b> Rust 1.97 · MSVC</span>
     <span><b>后端</b> 无</span>
     <span><b>内置</b> 19 本 × 中英 · 632 条</span>
-    <span><b>测试</b> 102</span>
-    <span><b>冷启动</b> 38ms</span>
+    <span><b>测试</b> 176</span>
+    <span><b>加载 632 条</b> ~7ms</span>
   </div>
 </header>
+
+
+<!-- ══════════ 与实现的差异 ══════════ -->
+<section id="s0">
+  <div class="col">
+    <div class="dr" style="border-left:3px solid var(--hi,#c96);padding-left:1rem">
+      <h5>这份文档是方案稿，不是实现说明</h5>
+      <p>下面写的是动手之前的设计。真正做出来的东西在三个地方走了不同的路，都是被实际使用逼出来的 —— 文档留原样，差异记在这里：</p>
+      <dl>
+        <dt>注入只有两条通道，不是三条</dt>
+        <dd class="now"><b>D-05 的 B 通道（键盘模拟）没有实现。</b>做出来的是 shell widget（A）加剪贴板兜底（C）。全局键盘合成要吃下 Wayland、macOS 授权和 EDR 误报三笔长期债，而 ssh 场景用 widget 在<em>远端</em>装一份 jot 也能解决。多行注入的 bracketed paste 因此也没有做：PowerShell 靠 <code>-join</code>、zsh/fish 的缓冲区本身支持多行，bash 4.0 以下则直接告诉用户绑不了键。</dd>
+        <dt>TUI 画在终端设备上，不是 stderr</dt>
+        <dd class="now">4.2 写的是「画到 stderr/tty」。照着做出了一个真实的 bug：widget 脚本里一个 <code>2>&amp;1</code> 就让 jot 看到管道、拒绝开界面。现在一律直接打开 <code>CONOUT$</code> / <code>/dev/tty</code>，「是否可交互」改由 stdin 是不是终端来判断。</dd>
+        <dt><code>@platform</code> 是标签，不是过滤器</dt>
+        <dd class="now">原设计按平台隐藏条目。实际用起来是错的 —— 人们从 Windows ssh 到 Linux、在 WSL 里跑 Linux 命令，把条目藏起来等于把工具废掉一半。现在它只影响排序和显示的那行小字。</dd>
+      </dl>
+    </div>
+  </div>
+</section>
 
 <!-- ══════════════ 1 ══════════════ -->
 <section id="s1">
@@ -353,7 +372,7 @@ figcaption{
 
           <rect x="500" y="18" width="340" height="76" rx="6" fill="var(--sunken)" stroke="var(--rule-strong)"/>
           <text x="518" y="44" fill="var(--ink)" font-size="14" font-weight="600">CLI · jot</text>
-          <text x="518" y="65" fill="var(--muted)">单文件二进制 · 冷启动预算 50ms</text>
+          <text x="518" y="65" fill="var(--muted)">单文件二进制 · 加载预算 50ms</text>
           <text x="518" y="82" fill="var(--muted)">内建 TUI · shell widget 后端</text>
 
           <path d="M230 94 L230 128 L450 128 L450 152" fill="none" stroke="var(--rule-strong)" stroke-width="1.5" marker-end="url(#ar)"/>

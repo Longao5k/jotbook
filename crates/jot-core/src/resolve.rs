@@ -12,8 +12,10 @@
 use crate::config::Profiles;
 use crate::notebook::VarDecl;
 use crate::t;
-use std::process::Command;
-use std::time::Duration;
+use std::io::Read;
+use std::process::{Child, Command, Stdio};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 /// How a variable should be asked for.
 #[derive(Debug, Clone)]
@@ -70,20 +72,71 @@ pub fn shell_candidates(cmd: &str) -> Vec<Choice> {
     seen
 }
 
-fn run_capture(cmd: &str, _timeout: Duration) -> Option<String> {
-    let output = if cfg!(target_os = "windows") {
-        Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", cmd])
-            .output()
+/// How often to look in on a running child. Short enough that a fast command
+/// is not noticeably delayed, long enough that the wait costs nothing.
+const POLL: Duration = Duration::from_millis(2);
+
+fn spawn(cmd: &str) -> std::io::Result<Child> {
+    let mut c = if cfg!(target_os = "windows") {
+        let mut c = Command::new("powershell");
+        c.args(["-NoProfile", "-NonInteractive", "-Command", cmd]);
+        c
     } else {
-        Command::new("sh").args(["-c", cmd]).output()
+        let mut c = Command::new("sh");
+        c.args(["-c", cmd]);
+        c
     };
-    match output {
-        Ok(o) if o.status.success() => Some(String::from_utf8_lossy(&o.stdout).into_owned()),
-        // A non-zero exit (say, not inside a git repo) can still carry useful output
-        Ok(o) if !o.stdout.is_empty() => Some(String::from_utf8_lossy(&o.stdout).into_owned()),
-        _ => None,
-    }
+    c.stdin(Stdio::null()) // nothing here is interactive; give it EOF, not the user's terminal
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+}
+
+/// Read a pipe to the end on its own thread.
+fn drain<R: Read + Send + 'static>(mut r: R) -> JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = r.read_to_end(&mut buf);
+        buf
+    })
+}
+
+/// Run a command, giving up after `timeout`.
+///
+/// The deadline is the entire point of this function. A `cmd:` that reaches for
+/// the network - kubectl against an unreachable cluster, docker against a
+/// stopped daemon - would otherwise hang the picker with no way out but killing
+/// jot from another window. Coming back empty costs the user a list they have to
+/// type by hand; hanging costs them the tool.
+fn run_capture(cmd: &str, timeout: Duration) -> Option<String> {
+    let mut child = spawn(cmd).ok()?;
+
+    // Drain both pipes on their own threads. A child that fills its stdout
+    // buffer blocks until someone reads it, and that deadlock looks exactly
+    // like the hang the timeout is here to prevent.
+    let out = child.stdout.take().map(drain);
+    let err = child.stderr.take().map(drain);
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(POLL),
+            // Out of time, or waiting itself failed. Either way, stop it.
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    drop(err); // never read; drained only so the child could not block on it
+
+    let status = status?;
+    let bytes = out.and_then(|h| h.join().ok())?;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    // A non-zero exit (say, not inside a git repo) can still carry useful output
+    (status.success() || !text.is_empty()).then_some(text)
 }
 
 /// Built-in variables. None when it cannot be computed, which falls back to free text.
@@ -94,7 +147,7 @@ pub fn builtin(name: &str) -> Option<String> {
             .ok()
             .map(|p| p.display().to_string()),
         "date" => Some(today()),
-        "clipboard" => None, // 由前端注入，core 不碰剪贴板
+        "clipboard" => None, // injected by the front end; core never touches the clipboard
         "host" => run_capture("hostname", Duration::from_secs(2)).map(|s| s.trim().to_string()),
         "git.branch" => run_capture("git rev-parse --abbrev-ref HEAD", Duration::from_secs(2))
             .map(|s| s.trim().to_string())
@@ -264,6 +317,53 @@ mod tests {
             Ask::Text { default, .. } => assert_eq!(default.as_deref(), Some("8000")),
             other => panic!("should have been free text, got {other:?}"),
         }
+    }
+
+    /// The timeout used to be a parameter named `_timeout` that nothing read.
+    /// A `cmd:` reaching an unreachable host hung the picker outright, and the
+    /// only way out was killing jot from another window.
+    #[test]
+    fn a_hanging_command_gives_up_instead_of_hanging_the_picker() {
+        let sleep = if cfg!(windows) {
+            "Start-Sleep -Seconds 60"
+        } else {
+            "sleep 60"
+        };
+        let started = Instant::now();
+        let got = run_capture(sleep, Duration::from_millis(600));
+        let took = started.elapsed();
+        assert!(got.is_none(), "a killed command has no output to offer");
+        assert!(
+            took < Duration::from_secs(20),
+            "gave up after {took:?}; the deadline is not being enforced"
+        );
+    }
+
+    /// The other half: giving up early must not mean giving up on everything.
+    #[test]
+    fn a_quick_command_still_comes_back_with_its_output() {
+        let echo = if cfg!(windows) {
+            "Write-Output ok"
+        } else {
+            "echo ok"
+        };
+        let got = run_capture(echo, Duration::from_secs(30));
+        assert_eq!(got.as_deref().map(str::trim), Some("ok"));
+    }
+
+    /// A command that asks for input gets EOF rather than the user's terminal.
+    /// Inheriting stdin let a stray `read` sit there forever.
+    #[test]
+    fn a_command_that_reads_stdin_is_not_left_waiting() {
+        let read = if cfg!(windows) {
+            "$i = [Console]::In.ReadToEnd(); Write-Output \"done\""
+        } else {
+            "cat > /dev/null; echo done"
+        };
+        let started = Instant::now();
+        let got = run_capture(read, Duration::from_secs(30));
+        assert_eq!(got.as_deref().map(str::trim), Some("done"));
+        assert!(started.elapsed() < Duration::from_secs(20));
     }
 
     /// `jot save`'s reverse parameterization writes no vars: declaration, so an

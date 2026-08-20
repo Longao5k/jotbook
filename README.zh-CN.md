@@ -107,6 +107,7 @@ jot                                                      # 开始用
 | `jot save "<命令>"` | 存一条指定的命令 |
 | `jot import history` | 从 shell 历史批量导入，按频次排序 |
 | `jot ls` | 列出全部条目 |
+| `jot notebooks` | 列出所有笔记本，以及在选择器里用的 `@名字` |
 | `jot edit [笔记本]` | 用 `$EDITOR` 打开 |
 | `jot new <名字>` | 新建笔记本 |
 | `jot use <profile>` | 切换 Profile |
@@ -153,6 +154,18 @@ sudo systemctl restart {{service}}
 | `@confirm` | 危险命令。注入前多一步确认，列表里带 ⚠ |
 | `@remote` | 预期在 `ssh` 之后使用。会禁用该条目的动态变量 —— 它们会在**本地**求值 |
 | `@tags=` | 额外的搜索关键词 |
+
+### 在选择器里缩小范围
+
+六百条一条条翻太累。两个前缀可以限定范围：
+
+| 输入 | 结果 |
+|---|---|
+| `@docker` | 只看 docker 这一本 |
+| `#deploy` | 只看打了 deploy 标签的 |
+| `@docker 日志` | 范围和搜索词一起用 |
+
+`jot notebooks` 列出所有可用的名字。所有条件都要满足，所以 `@git #undo reset` 是三重收窄。
 
 ### 变量的三层
 

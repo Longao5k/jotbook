@@ -107,6 +107,7 @@ jot                                                      # go
 | `jot save "<command>"` | Save a specific command |
 | `jot import history` | Bulk import from shell history, ranked by frequency |
 | `jot ls` | List every entry |
+| `jot notebooks` | List the notebooks and the `@name` to filter by |
 | `jot edit [notebook]` | Open in `$EDITOR` |
 | `jot new <name>` | Create a notebook |
 | `jot use <profile>` | Switch profile |
@@ -153,6 +154,19 @@ sudo systemctl restart {{service}}
 | `@confirm` | Dangerous. Extra confirmation before injecting, marked ⚠ in the list |
 | `@remote` | Meant for use after `ssh`. Disables this entry's dynamic variables, since they'd evaluate **locally** |
 | `@tags=` | Extra search keywords |
+
+### Narrowing the picker
+
+Six hundred entries is a lot to scroll. Two prefixes scope the search:
+
+| Typing | Shows |
+|---|---|
+| `@docker` | only the docker notebook |
+| `#deploy` | only entries tagged deploy |
+| `@docker logs` | scope and search term together |
+
+`jot notebooks` lists the names available. Everything must match, so
+`@git #undo reset` narrows three ways at once.
 
 ### Variables
 

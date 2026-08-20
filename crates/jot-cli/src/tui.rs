@@ -85,14 +85,64 @@ pub enum Picked {
     Cancel,
 }
 
-fn score(matcher: &SkimMatcherV2, hay: &str, needle: &str) -> Option<i64> {
-    if needle.is_empty() {
+/// A typed query, split into scopes and free terms.
+///
+/// `@name` narrows to a notebook and `#name` to a tag, so a flat list of six
+/// hundred entries can be browsed a category at a time. Everything else is a
+/// plain search term.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Query<'a> {
+    pub notebooks: Vec<&'a str>,
+    pub tags: Vec<&'a str>,
+    pub terms: Vec<&'a str>,
+}
+
+impl<'a> Query<'a> {
+    pub(crate) fn parse(input: &'a str) -> Query<'a> {
+        let mut q = Query::default();
+        for part in input.split_whitespace() {
+            match (part.strip_prefix('@'), part.strip_prefix('#')) {
+                // A bare @ or # is someone mid-typing, not a filter yet
+                (Some(""), _) | (_, Some("")) => {}
+                (Some(rest), _) => q.notebooks.push(rest),
+                (_, Some(rest)) => q.tags.push(rest),
+                _ => q.terms.push(part),
+            }
+        }
+        q
+    }
+
+    fn is_empty(&self) -> bool {
+        self.notebooks.is_empty() && self.tags.is_empty() && self.terms.is_empty()
+    }
+}
+
+/// Score one entry against a query. `None` means it does not match at all.
+///
+/// Every part must match, like fzf's AND semantics: scopes narrow, terms search.
+pub(crate) fn score(
+    matcher: &SkimMatcherV2,
+    entry: &Entry,
+    hay: &str,
+    q: &Query<'_>,
+) -> Option<i64> {
+    if q.is_empty() {
         return Some(0);
     }
-    // Split on spaces and require every part to match, like fzf's AND semantics
     let mut total = 0i64;
-    for part in needle.split_whitespace() {
-        total += matcher.fuzzy_match(hay, part)?;
+    for wanted in &q.notebooks {
+        total += matcher.fuzzy_match(&entry.notebook, wanted)?;
+    }
+    for wanted in &q.tags {
+        // A tag filter matches if any one of the entry's tags does
+        total += entry
+            .tags
+            .iter()
+            .filter_map(|t| matcher.fuzzy_match(t, wanted))
+            .max()?;
+    }
+    for term in &q.terms {
+        total += matcher.fuzzy_match(hay, term)?;
     }
     Some(total)
 }
@@ -224,8 +274,8 @@ pub(crate) fn draw_picker(
     }
     detail.push(Line::from(Span::styled(
         t!(
-            "↑↓ 选择   ⏎ 使用   ^E 打开文件   esc 取消",
-            "up/down move   enter use   ^E open file   esc cancel"
+            "↑↓ 选择   ⏎ 使用   ^E 打开文件   esc 取消   ·   @笔记本  #标签 可缩小范围",
+            "up/down move   enter use   ^E open file   esc cancel   ·   @notebook  #tag to narrow"
         ),
         Style::default().fg(DIM),
     )));
@@ -253,10 +303,13 @@ impl Ui {
 
         loop {
             // Filter and rank
+            let parsed = Query::parse(&query);
             let mut hits: Vec<(usize, i64)> = entries
                 .iter()
                 .enumerate()
-                .filter_map(|(i, _)| score(&matcher, &hays[i], &query).map(|s| (i, s + boosts[i])))
+                .filter_map(|(i, e)| {
+                    score(&matcher, e, &hays[i], &parsed).map(|s| (i, s + boosts[i]))
+                })
                 .collect();
             // Always sort: with an empty query this degrades to "most used first",
             // and equal scores keep file order thanks to sort_by_key being stable
@@ -935,5 +988,77 @@ echo an equally extremely extremely extremely long command body {{var}}
             "rendered row count does not match the terminal height:
 {s}"
         );
+    }
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::*;
+    use jot_core::notebook;
+    use std::path::Path;
+
+    const SRC: &str = "---\nname: docker\ntags: [ops]\n---\n\n\
+## Follow container logs\n\n\
+```sh @tags=logs,daily\ndocker logs -f\n```\n\n\
+## Prune images\n\n\
+```sh @tags=cleanup\ndocker system prune\n```\n";
+
+    fn entries() -> Vec<notebook::Entry> {
+        notebook::parse(Path::new("docker.md"), SRC)
+            .unwrap()
+            .entries
+    }
+
+    fn matches(query: &str) -> Vec<String> {
+        let m = SkimMatcherV2::default().ignore_case();
+        let q = Query::parse(query);
+        entries()
+            .iter()
+            .filter(|e| score(&m, e, &e.haystack(), &q).is_some())
+            .map(|e| e.title.clone())
+            .collect()
+    }
+
+    #[test]
+    fn plain_terms_search_everything() {
+        assert_eq!(matches("logs"), ["Follow container logs"]);
+        assert_eq!(matches("").len(), 2);
+    }
+
+    #[test]
+    fn at_narrows_to_a_notebook() {
+        assert_eq!(matches("@docker").len(), 2);
+        assert!(matches("@git").is_empty(), "matched the wrong notebook");
+    }
+
+    #[test]
+    fn hash_narrows_to_a_tag() {
+        assert_eq!(matches("#cleanup"), ["Prune images"]);
+        assert_eq!(matches("#logs"), ["Follow container logs"]);
+        assert!(matches("#nosuchtag").is_empty());
+    }
+
+    #[test]
+    fn scopes_and_terms_combine() {
+        assert_eq!(matches("@docker prune"), ["Prune images"]);
+        assert_eq!(matches("@docker #logs"), ["Follow container logs"]);
+        // Every part has to match, so a contradiction yields nothing
+        assert!(matches("@docker #cleanup logs").is_empty());
+    }
+
+    #[test]
+    fn a_bare_prefix_is_not_a_filter_yet() {
+        // Someone mid-typing must not have the list vanish under them
+        assert_eq!(Query::parse("@"), Query::default());
+        assert_eq!(Query::parse("#"), Query::default());
+        assert_eq!(matches("@").len(), 2);
+    }
+
+    #[test]
+    fn parsing_splits_the_three_kinds() {
+        let q = Query::parse("@docker #deploy restart api");
+        assert_eq!(q.notebooks, ["docker"]);
+        assert_eq!(q.tags, ["deploy"]);
+        assert_eq!(q.terms, ["restart", "api"]);
     }
 }

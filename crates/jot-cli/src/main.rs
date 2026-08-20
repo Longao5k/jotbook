@@ -26,8 +26,27 @@ use tui::{Picked, Ui};
 const EXIT_CANCEL: i32 = 130;
 
 const SUBCOMMANDS: &[&str] = &[
-    "pick", "save", "ls", "list", "init", "edit", "new", "use", "profile", "import", "doctor",
-    "path", "help", "add", "sync", "sources", "remove", "trust", "untrust", "lang",
+    "pick",
+    "save",
+    "ls",
+    "list",
+    "init",
+    "edit",
+    "new",
+    "use",
+    "profile",
+    "import",
+    "doctor",
+    "path",
+    "help",
+    "add",
+    "sync",
+    "sources",
+    "remove",
+    "trust",
+    "untrust",
+    "lang",
+    "notebooks",
 ];
 
 #[derive(Parser)]
@@ -114,6 +133,8 @@ enum Cmd {
     Trust { name: String },
     /// Withdraw trust
     Untrust { name: String },
+    /// List the notebooks, with the @name to filter by in the picker
+    Notebooks,
     /// Show or set the interface language
     Lang {
         /// en | zh | auto
@@ -234,6 +255,7 @@ fn run() -> Result<i32> {
         Some(Cmd::Remove { name }) => cmd_remove(&name),
         Some(Cmd::Trust { name }) => cmd_trust(&name, true),
         Some(Cmd::Untrust { name }) => cmd_trust(&name, false),
+        Some(Cmd::Notebooks) => cmd_notebooks(),
         Some(Cmd::Lang { value }) => cmd_lang(value.as_deref()),
         Some(Cmd::Doctor) => cmd_doctor(),
         Some(Cmd::Path) => cmd_path(),
@@ -980,6 +1002,49 @@ fn cmd_trust(name: &str, on: bool) -> Result<i32> {
         } else {
             t!("已撤销授信", "no longer trusted")
         }
+    );
+    Ok(0)
+}
+
+fn cmd_notebooks() -> Result<i32> {
+    let paths = Paths::discover()?;
+    let lib = Library::load(&paths)?;
+    let plat = jot_core::notebook::current_platform();
+
+    println!(
+        "{}",
+        t!(
+            "在选择器里输入 @名字 就能只看这一本，#标签 按标签筛",
+            "Type @name in the picker to see only that notebook, #tag to filter by tag"
+        )
+    );
+    println!();
+
+    let mut rows: Vec<(String, usize, String)> = lib
+        .notebooks
+        .iter()
+        .map(|n| {
+            let visible = n.entries.iter().filter(|e| e.visible_on(plat)).count();
+            (n.name.clone(), visible, n.description.clone())
+        })
+        .filter(|(_, visible, _)| *visible > 0)
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (name, visible, description) in &rows {
+        println!("  @{name:<14} {visible:>4}   {description}");
+    }
+
+    let total: usize = rows.iter().map(|(_, n, _)| n).sum();
+    println!();
+    println!(
+        "{}",
+        t!(
+            "  {} 本 · {} 条（当前平台可见）",
+            "  {} notebooks, {} entries visible on this platform",
+            rows.len(),
+            total
+        )
     );
     Ok(0)
 }

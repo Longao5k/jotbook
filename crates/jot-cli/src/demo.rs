@@ -132,17 +132,33 @@ fn svg(frames: &[Frame0]) -> String {
 "#
     ));
 
-    // One keyframes rule per frame, each holding its slice of the timeline
+    // One keyframes rule per frame, each holding its slice of the timeline.
+    //
+    // Two things keep the frames from bleeding into one another. `step-end`
+    // stops opacity being interpolated between keyframes, and every rule
+    // states its value at 0% - without that, a frame starting at 40% has no
+    // value to hold before then, so the browser ramps it up from the base
+    // across those 40%, and every frame fades in on top of its predecessor.
     let mut at = 0.0f64;
     for (i, f) in frames.iter().enumerate() {
         let start = at / total * 100.0;
-        let end = (at + f.hold) / total * 100.0;
-        // A frame that would end at exactly 100% must not wrap to 0 early
-        let tail = if end >= 99.99 { 100.0 } else { end };
+        let end = ((at + f.hold) / total * 100.0).min(100.0);
         s.push_str(&format!(
-            "  #f{i} {{ animation: k{i} {total:.2}s infinite }}\n  @keyframes k{i} {{ {start:.3}% {{ opacity: 1 }} {tail:.3}% {{ opacity: 1 }} {:.3}% {{ opacity: 0 }} 100% {{ opacity: 0 }} }}\n",
-            (tail + 0.001).min(100.0)
+            "  #f{i} {{ animation: k{i} {total:.2}s step-end infinite }}\n"
         ));
+        if i == 0 {
+            s.push_str(&format!(
+                "  @keyframes k0 {{ 0% {{ opacity: 1 }} {end:.4}% {{ opacity: 0 }} }}\n"
+            ));
+        } else if end >= 99.999 {
+            s.push_str(&format!(
+                "  @keyframes k{i} {{ 0% {{ opacity: 0 }} {start:.4}% {{ opacity: 1 }} }}\n"
+            ));
+        } else {
+            s.push_str(&format!(
+                "  @keyframes k{i} {{ 0% {{ opacity: 0 }} {start:.4}% {{ opacity: 1 }} {end:.4}% {{ opacity: 0 }} }}\n"
+            ));
+        }
         at += f.hold;
     }
 

@@ -9,28 +9,28 @@
   @media (prefers-reduced-motion: reduce) {
     .f { animation: none !important }
   }
-  #f0 { animation: k0 12.24s infinite }
-  @keyframes k0 { 0.000% { opacity: 1 } 11.438% { opacity: 1 } 11.439% { opacity: 0 } 100% { opacity: 0 } }
-  #f1 { animation: k1 12.24s infinite }
-  @keyframes k1 { 11.438% { opacity: 1 } 20.425% { opacity: 1 } 20.426% { opacity: 0 } 100% { opacity: 0 } }
-  #f2 { animation: k2 12.24s infinite }
-  @keyframes k2 { 20.425% { opacity: 1 } 22.712% { opacity: 1 } 22.713% { opacity: 0 } 100% { opacity: 0 } }
-  #f3 { animation: k3 12.24s infinite }
-  @keyframes k3 { 22.712% { opacity: 1 } 25.000% { opacity: 1 } 25.001% { opacity: 0 } 100% { opacity: 0 } }
-  #f4 { animation: k4 12.24s infinite }
-  @keyframes k4 { 25.000% { opacity: 1 } 27.288% { opacity: 1 } 27.289% { opacity: 0 } 100% { opacity: 0 } }
-  #f5 { animation: k5 12.24s infinite }
-  @keyframes k5 { 27.288% { opacity: 1 } 41.176% { opacity: 1 } 41.177% { opacity: 0 } 100% { opacity: 0 } }
-  #f6 { animation: k6 12.24s infinite }
-  @keyframes k6 { 41.176% { opacity: 1 } 50.980% { opacity: 1 } 50.981% { opacity: 0 } 100% { opacity: 0 } }
-  #f7 { animation: k7 12.24s infinite }
-  @keyframes k7 { 50.980% { opacity: 1 } 58.333% { opacity: 1 } 58.334% { opacity: 0 } 100% { opacity: 0 } }
-  #f8 { animation: k8 12.24s infinite }
-  @keyframes k8 { 58.333% { opacity: 1 } 60.784% { opacity: 1 } 60.785% { opacity: 0 } 100% { opacity: 0 } }
-  #f9 { animation: k9 12.24s infinite }
-  @keyframes k9 { 60.784% { opacity: 1 } 72.222% { opacity: 1 } 72.223% { opacity: 0 } 100% { opacity: 0 } }
-  #f10 { animation: k10 12.24s infinite }
-  @keyframes k10 { 72.222% { opacity: 1 } 100.000% { opacity: 1 } 100.000% { opacity: 0 } 100% { opacity: 0 } }
+  #f0 { animation: k0 12.24s step-end infinite }
+  @keyframes k0 { 0% { opacity: 1 } 11.4379% { opacity: 0 } }
+  #f1 { animation: k1 12.24s step-end infinite }
+  @keyframes k1 { 0% { opacity: 0 } 11.4379% { opacity: 1 } 20.4248% { opacity: 0 } }
+  #f2 { animation: k2 12.24s step-end infinite }
+  @keyframes k2 { 0% { opacity: 0 } 20.4248% { opacity: 1 } 22.7124% { opacity: 0 } }
+  #f3 { animation: k3 12.24s step-end infinite }
+  @keyframes k3 { 0% { opacity: 0 } 22.7124% { opacity: 1 } 25.0000% { opacity: 0 } }
+  #f4 { animation: k4 12.24s step-end infinite }
+  @keyframes k4 { 0% { opacity: 0 } 25.0000% { opacity: 1 } 27.2876% { opacity: 0 } }
+  #f5 { animation: k5 12.24s step-end infinite }
+  @keyframes k5 { 0% { opacity: 0 } 27.2876% { opacity: 1 } 41.1765% { opacity: 0 } }
+  #f6 { animation: k6 12.24s step-end infinite }
+  @keyframes k6 { 0% { opacity: 0 } 41.1765% { opacity: 1 } 50.9804% { opacity: 0 } }
+  #f7 { animation: k7 12.24s step-end infinite }
+  @keyframes k7 { 0% { opacity: 0 } 50.9804% { opacity: 1 } 58.3333% { opacity: 0 } }
+  #f8 { animation: k8 12.24s step-end infinite }
+  @keyframes k8 { 0% { opacity: 0 } 58.3333% { opacity: 1 } 60.7843% { opacity: 0 } }
+  #f9 { animation: k9 12.24s step-end infinite }
+  @keyframes k9 { 0% { opacity: 0 } 60.7843% { opacity: 1 } 72.2222% { opacity: 0 } }
+  #f10 { animation: k10 12.24s step-end infinite }
+  @keyframes k10 { 0% { opacity: 0 } 72.2222% { opacity: 1 } }
 </style>
 <rect width="100%" height="100%" rx="8" fill="#12141c"/>
 <circle cx="18" cy="16" r="5" fill="#e06c60"/><circle cx="35" cy="16" r="5" fill="#e0c07a"/><circle cx="52" cy="16" r="5" fill="#8bc46a"/>

@@ -801,4 +801,19 @@ fn powershell_widget_script_is_defensive() {
         s.contains("InvokePrompt"),
         "does not redraw after the alternate screen:\n{s}"
     );
+    // Redirecting stderr into the pipeline puts the picker's own output on a
+    // pipe, and jot then rightly refuses to draw a UI there. Check the actual
+    // invocation, not the whole script - the comment above it says "2>&1" too.
+    let invocation = s
+        .lines()
+        .find(|l| l.contains("& jot @jotArgs"))
+        .unwrap_or_else(|| panic!("no jot invocation in the script:\n{s}"));
+    assert!(
+        !invocation.contains("2>&1"),
+        "redirects stderr, which stops the picker being able to draw: {invocation}"
+    );
+    assert!(
+        s.contains("OutputEncoding"),
+        "does not force UTF-8 decoding, so non-ASCII commands come back mangled:\n{s}"
+    );
 }

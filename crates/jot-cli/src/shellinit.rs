@@ -19,6 +19,15 @@ pub const SHELLS: &[&str] = &["powershell", "bash", "zsh", "fish"];
 fn powershell(key: &str) -> String {
     format!(
         r#"# jot shell integration (PowerShell)
+
+# Windows PowerShell decodes a native command's stdout with this encoding, and
+# it defaults to the OEM code page. jot emits UTF-8, so without this any
+# non-ASCII in a command comes back mangled and gets typed onto your prompt
+# that way.
+if ([Console]::OutputEncoding.CodePage -ne 65001) {{
+    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+}}
+
 function Invoke-JotWidget {{
     $line = $null
     $cursor = $null
@@ -35,9 +44,11 @@ function Invoke-JotWidget {{
     $failure = $null
     $env:JOT_WIDGET = '1'
     try {{
-        $out = & jot @jotArgs 2>&1 | ForEach-Object {{
-            if ($_ -is [System.Management.Automation.ErrorRecord]) {{ $failure = $_ }} else {{ $_ }}
-        }}
+        # Capture stdout only. Redirecting stderr with 2>&1 would put it in the
+        # pipeline, and stderr is where the picker draws - jot would rightly
+        # refuse to open a UI on a pipe. Anything jot writes to stderr lands on
+        # the terminal, which is exactly where the user should see it.
+        $out = & jot @jotArgs
         $code = $LASTEXITCODE
     }} catch {{
         $failure = $_

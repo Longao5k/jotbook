@@ -751,7 +751,18 @@ fn cmd_import_history(top: usize) -> Result<i32> {
 fn cmd_ls(notebook: Option<&str>) -> Result<i32> {
     let paths = Paths::discover()?;
     let lib = Library::load(&paths)?;
+    let cfg = Config::load(&paths);
+    let profiles = Profiles::load(&paths);
     let plat = jot_core::notebook::current_platform();
+
+    // Whatever the active profile already settles is shown as the real value,
+    // so a listing never looks less usable than it is.
+    let known: HashMap<String, String> = profiles
+        .entries(cfg.profile_name())
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
     for nb in &lib.notebooks {
         if let Some(f) = notebook {
             if nb.name != f {
@@ -780,7 +791,12 @@ fn cmd_ls(notebook: Option<&str>) -> Result<i32> {
                 Some(p) => format!("  ({p})"),
                 None => String::new(),
             };
-            println!("  {:<40} {}{}", e.title, vars::preview(&e.command), tag);
+            println!(
+                "  {:<40} {}{}",
+                e.title,
+                vars::preview_with(&e.command, &known),
+                tag
+            );
         }
     }
     Ok(0)

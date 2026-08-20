@@ -137,6 +137,30 @@ pub fn render(text: &str, values: &std::collections::HashMap<String, String>) ->
     out
 }
 
+/// Preview for a listing, with anything already settled filled in.
+///
+/// A listing that shows `⟨service⟩` for a value the profile already knows
+/// reads as "this is not usable yet", when in fact selecting it produces the
+/// finished command. Show what is settled, and keep the placeholder only for
+/// what will actually be asked.
+pub fn preview_with(text: &str, values: &std::collections::HashMap<String, String>) -> String {
+    let mut out = String::with_capacity(text.len());
+    for seg in tokenize(text) {
+        match seg {
+            Seg::Lit(s) => out.push_str(&s),
+            Seg::Var { name, default } => match values.get(&name).or(default.as_ref()) {
+                Some(v) => out.push_str(v),
+                None => {
+                    out.push('⟨');
+                    out.push_str(name.trim_start_matches('@'));
+                    out.push('⟩');
+                }
+            },
+        }
+    }
+    out
+}
+
 /// Preview for the list: variables become ⟨name⟩, which reads better than braces.
 pub fn preview(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -248,5 +272,22 @@ mod tests {
     #[test]
     fn preview_reads_better() {
         assert_eq!(preview("restart {{service}}"), "restart ⟨service⟩");
+    }
+
+    /// A listing should not imply an entry is unusable when the profile has
+    /// already settled the value.
+    #[test]
+    fn preview_fills_in_what_is_already_known() {
+        let mut v = HashMap::new();
+        v.insert("service".to_string(), "api.service".to_string());
+        assert_eq!(
+            preview_with("restart {{service}} on {{host}}", &v),
+            "restart api.service on ⟨host⟩"
+        );
+        // An inline default counts as settled too
+        assert_eq!(
+            preview_with("serve {{port=8000}}", &HashMap::new()),
+            "serve 8000"
+        );
     }
 }

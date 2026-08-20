@@ -4,8 +4,6 @@
 //! anything - pressing Enter is always the human's job.
 
 mod console;
-#[cfg(test)]
-mod demo;
 mod locale;
 mod shellinit;
 mod tui;

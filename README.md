@@ -7,7 +7,7 @@
 
 A notebook for the commands **you** actually use. Hit one key, the command lands on your prompt — you press Enter.
 
-<img src="docs/demo.svg" alt="jot: search your commands, fill in the variables, and it lands on your prompt" width="100%">
+<img src="docs/Jotbook.gif" alt="Search your commands, fill in the variables, and the command lands on your prompt" width="100%">
 
 ## Why
 
@@ -126,6 +126,10 @@ jot                                                      # go
 | `@notebook` `#tag` | Narrow the list, typed into the search box |
 
 ## Writing notebooks
+
+`jot new` makes one, `jot save` asks which one to put a command in, and `@name` in the picker narrows to it:
+
+<img src="docs/Jotbook-notebook.gif" alt="Creating a notebook, saving a command into it, and finding it again" width="100%">
 
 A notebook is plain Markdown. `##` headings are entry names, the paragraph under one is the description, the code block is the command.
 

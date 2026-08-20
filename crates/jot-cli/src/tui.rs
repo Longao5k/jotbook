@@ -1,7 +1,11 @@
 //! The terminal interface.
 //!
-//! Everything is drawn to stderr: stdout belongs to the result, which is how
-//! the shell widget receives the final command (widget protocol, design doc 4.2).
+//! Drawn straight to the controlling terminal - `CONOUT$` on Windows,
+//! `/dev/tty` elsewhere - never to stdout or stderr. Those belong to the
+//! caller: stdout carries the result to the shell widget (widget protocol,
+//! design doc 4.2), and either of them may be a pipe depending on how the
+//! shell invoked us. Rendering to the device directly means the picker works
+//! no matter what the caller redirects.
 
 use anyhow::Result;
 use fuzzy_matcher::skim::SkimMatcherV2;
@@ -20,35 +24,56 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{backend::CrosstermBackend, Frame, Terminal};
-use std::io::Stderr;
+use std::fs::{File, OpenOptions};
 
 const ACCENT: Color = Color::Cyan;
 const DIM: Color = Color::DarkGray;
 const WARN: Color = Color::Yellow;
 
+/// Open the controlling terminal for writing.
+///
+/// `CONOUT$` needs read *and* write access or the console APIs reject it.
+/// Returns None when there is no terminal attached at all, which is the only
+/// case where a picker genuinely cannot run.
+pub fn open_console() -> Option<File> {
+    let path = if cfg!(windows) { "CONOUT$" } else { "/dev/tty" };
+    OpenOptions::new().read(true).write(true).open(path).ok()
+}
+
 pub struct Ui {
-    term: Terminal<CrosstermBackend<Stderr>>,
+    term: Terminal<CrosstermBackend<File>>,
+    /// A second handle for the alternate-screen escape sequences on teardown
+    console: File,
 }
 
 impl Ui {
     pub fn new() -> Result<Ui> {
-        // In widget mode stdout is a pipe but stderr is still the terminal, which is where the UI goes
-        if !std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+        // A console handle alone is not enough: a test harness or a build
+        // script inherits one too, and opening a picker there would hang
+        // forever on a keypress that never comes. Interactive use always has
+        // stdin on the terminal - the shell widgets redirect it from the tty
+        // explicitly for exactly this reason.
+        let interactive =
+            std::io::IsTerminal::is_terminal(&std::io::stdin()) && open_console().is_some();
+        let Some(console) = open_console().filter(|_| interactive) else {
             anyhow::bail!("{}", t!("jot 需要一个真正的终端。要在脚本里用请加 --first，例如：\n  jot pick --query \"docker 日志\" --first", "jot needs a real terminal. For scripts add --first, for example:\n  jot pick --query \"docker logs\" --first"
             ));
-        }
+        };
+        let mut screen = console.try_clone()?;
         enable_raw_mode()?;
-        let mut err = std::io::stderr();
-        execute!(err, EnterAlternateScreen)?;
-        let term = Terminal::new(CrosstermBackend::new(std::io::stderr()))?;
-        Ok(Ui { term })
+        execute!(screen, EnterAlternateScreen)?;
+        let term = Terminal::new(CrosstermBackend::new(console))?;
+        Ok(Ui {
+            term,
+            console: screen,
+        })
     }
 }
 
 impl Drop for Ui {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(std::io::stderr(), LeaveAlternateScreen);
+        let _ = execute!(self.console, LeaveAlternateScreen);
         let _ = self.term.show_cursor();
     }
 }

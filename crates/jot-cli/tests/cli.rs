@@ -817,3 +817,27 @@ fn powershell_widget_script_is_defensive() {
         "does not force UTF-8 decoding, so non-ASCII commands come back mangled:\n{s}"
     );
 }
+
+/// Regression: the picker used to render to stderr, so any caller that
+/// redirected stderr - as the PowerShell widget did while capturing errors -
+/// made jot refuse to open a UI at all. It now renders to the terminal
+/// device, and only stdin decides whether this is an interactive run.
+#[test]
+fn the_picker_does_not_depend_on_stderr() {
+    let home = temp_home("stderrindep");
+    let src = stdout(&jot(&home, &["init", "bash"]));
+    // The widget contract: stdout carries the result, stdin comes from the tty
+    assert!(
+        src.contains("</dev/tty"),
+        "the bash widget does not give jot the terminal on stdin:\n{src}"
+    );
+
+    // With stdin not a terminal it must decline cleanly rather than hang
+    let o = jot(&home, &["pick", "--widget"]);
+    assert!(!o.status.success());
+    assert!(
+        stderr(&o).contains("--first"),
+        "expected the terminal guard, got: {}",
+        stderr(&o)
+    );
+}

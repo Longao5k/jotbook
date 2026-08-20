@@ -176,12 +176,32 @@ fn main() {
         match run() {
             Ok(code) => code,
             Err(e) => {
-                eprintln!("jot: {e:#}");
+                report_error(&e);
                 1
             }
         }
     };
     std::process::exit(code);
+}
+
+/// Put an error where the user will actually see it.
+///
+/// stderr is a pipe whenever a shell widget captures us, and a message
+/// swallowed by a pipe is exactly how a key binding ends up failing in
+/// silence. When that happens, write to the terminal device as well.
+fn report_error(e: &anyhow::Error) {
+    let msg = format!("jot: {e:#}");
+    eprintln!("{msg}");
+
+    // Only for a shell widget: it may be capturing stderr, and silencing it
+    // any other way (`jot 2>/dev/null`) is the caller's deliberate choice.
+    let from_widget = std::env::var("JOT_WIDGET").is_ok();
+    if from_widget && !std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+        if let Some(mut console) = tui::open_console() {
+            use std::io::Write;
+            let _ = writeln!(console, "{msg}");
+        }
+    }
 }
 
 fn run() -> Result<i32> {

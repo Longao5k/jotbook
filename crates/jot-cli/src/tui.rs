@@ -312,7 +312,12 @@ pub(crate) fn draw_picker(
 
 impl Ui {
     /// The picker.
-    pub fn pick(&mut self, entries: &[&Entry], initial: &str, usage: &Usage) -> Result<Picked> {
+    pub fn pick(
+        &mut self,
+        entries: &[&Entry],
+        query: &mut String,
+        usage: &Usage,
+    ) -> Result<Picked> {
         let matcher = SkimMatcherV2::default().ignore_case();
         let hays: Vec<String> = entries.iter().map(|e| e.haystack()).collect();
         // Frecency weights are precomputed; they are needed on every keystroke
@@ -325,13 +330,12 @@ impl Ui {
             .map(|e| usage.boost(&e.id(), now) + if e.runs_on(plat) { 4 } else { 0 })
             .collect();
 
-        let mut query = initial.to_string();
         let mut cursor = 0usize;
         let mut state = ListState::default();
 
         loop {
             // Filter and rank
-            let parsed = Query::parse(&query);
+            let parsed = Query::parse(query);
             let mut hits: Vec<(usize, i64)> = entries
                 .iter()
                 .enumerate()
@@ -348,7 +352,7 @@ impl Ui {
             state.select(if hits.is_empty() { None } else { Some(cursor) });
 
             self.term
-                .draw(|f| draw_picker(f, entries, &hits, &query, &mut state))?;
+                .draw(|f| draw_picker(f, entries, &hits, query, &mut state))?;
             let Event::Key(k) = event::read()? else {
                 continue;
             };

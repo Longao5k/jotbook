@@ -187,6 +187,18 @@ enum ImportCmd {
         #[arg(long, default_value_t = 60)]
         top: usize,
     },
+    /// Import pasted commands - from the clipboard by default
+    Text {
+        /// Read a file instead of the clipboard; - for stdin
+        #[arg(long, short)]
+        file: Option<String>,
+        /// Which personal notebook to save into
+        #[arg(long, short)]
+        notebook: Option<String>,
+        /// Print what would be imported and stop
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 /// `jot docker logs` -> `jot pick --query "docker logs"`, so you need not
@@ -288,6 +300,11 @@ fn run() -> Result<i32> {
         Some(Cmd::Profile { action }) => cmd_profile(action),
         Some(Cmd::Import { what }) => match what {
             ImportCmd::History { top } => cmd_import_history(top),
+            ImportCmd::Text {
+                file,
+                notebook,
+                dry_run,
+            } => cmd_import_text(file.as_deref(), notebook.as_deref(), dry_run),
         },
         Some(Cmd::Add { url, name }) => cmd_add(&url, name.as_deref()),
         Some(Cmd::Sync { name }) => cmd_sync(name.as_deref()),
@@ -350,62 +367,89 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
     }
 
     let mut ui = Ui::new()?;
-    let idx = match ui.pick(&entries, initial, &usage)? {
-        Picked::Cancel => {
-            drop(ui);
-            return Ok(EXIT_CANCEL);
-        }
-        Picked::Edit(i) => {
-            let path = entries[i].source.clone();
-            drop(ui);
-            open_editor(&path)?;
-            return Ok(0);
-        }
-        Picked::Entry(i) => i,
-    };
-    let entry = entries[idx];
-    let decls = lib.decls_for(entry);
+    let mut back_to = initial.to_string();
 
-    let mut values: HashMap<String, String> = HashMap::new();
-    for r in vars::refs(&entry.command) {
-        // @remote entries are used after ssh, where dynamic candidates would
-        // still be evaluated locally, so they must be disabled
-        let plan = resolve::plan(
-            &r.name,
-            r.default.as_deref(),
-            decls.get(&r.name),
-            &profiles,
-            cfg.profile_name(),
-            // Untrusted external sources have from: shell disabled (D-09), and so do
-            // @remote entries, whose candidates would be evaluated locally
-            entry.trusted && !entry.remote,
-        );
-        let context = vars::render(&entry.command, &values);
-        let got = match plan {
-            Ask::Resolved(v) => Some(v),
-            Ask::Choose {
-                label,
-                options,
-                default,
-            } => ui.ask_choice(&context, &label, &options, default.as_deref())?,
-            Ask::Text { label, default } => ui.ask_text(&context, &label, default.as_deref())?,
-        };
-        match got {
-            Some(v) => {
-                values.insert(r.name, v);
-            }
-            None => {
+    // Esc steps back one screen rather than abandoning everything. Filling in
+    // four variables and mistyping the last one should not cost you the other
+    // three, and it should certainly not cost you the search you just typed.
+    let (entry, final_cmd) = 'pick: loop {
+        let idx = match ui.pick(&entries, &mut back_to, &usage)? {
+            Picked::Cancel => {
                 drop(ui);
                 return Ok(EXIT_CANCEL);
             }
-        }
-    }
+            Picked::Edit(i) => {
+                let path = entries[i].source.clone();
+                drop(ui);
+                open_editor(&path)?;
+                return Ok(0);
+            }
+            Picked::Entry(i) => i,
+        };
+        let entry = entries[idx];
+        let decls = lib.decls_for(entry);
+        let refs = vars::refs(&entry.command);
 
-    let final_cmd = vars::render(&entry.command, &values);
-    if entry.confirm && !ui.confirm(&final_cmd)? {
-        drop(ui);
-        return Ok(EXIT_CANCEL);
-    }
+        let mut values: HashMap<String, String> = HashMap::new();
+        // Which refs actually put a question on screen, so going back lands on
+        // the previous *question* rather than a variable resolved silently.
+        let mut asked: Vec<usize> = Vec::new();
+        let mut i = 0usize;
+
+        while i < refs.len() {
+            let r = &refs[i];
+            let plan = resolve::plan(
+                &r.name,
+                r.default.as_deref(),
+                decls.get(&r.name),
+                &profiles,
+                cfg.profile_name(),
+                // Untrusted external sources have from: shell disabled (D-09), and so do
+                // @remote entries, whose candidates would be evaluated locally
+                entry.trusted && !entry.remote,
+            );
+            let context = vars::render(&entry.command, &values);
+            let (got, was_asked) = match plan {
+                Ask::Resolved(v) => (Some(v), false),
+                Ask::Choose {
+                    label,
+                    options,
+                    default,
+                } => (
+                    ui.ask_choice(&context, &label, &options, default.as_deref())?,
+                    true,
+                ),
+                Ask::Text { label, default } => {
+                    (ui.ask_text(&context, &label, default.as_deref())?, true)
+                }
+            };
+            match got {
+                Some(v) => {
+                    values.insert(r.name.clone(), v);
+                    if was_asked {
+                        asked.push(i);
+                    }
+                    i += 1;
+                }
+                None => match asked.pop() {
+                    // Back to the previous question, dropping only its answer
+                    Some(prev) => {
+                        values.remove(&refs[prev].name);
+                        i = prev;
+                    }
+                    // Nothing left to go back to, so back to the picker
+                    None => continue 'pick,
+                },
+            }
+        }
+
+        let final_cmd = vars::render(&entry.command, &values);
+        if entry.confirm && !ui.confirm(&final_cmd)? {
+            // Declining the confirmation returns you to the list, not the shell
+            continue 'pick;
+        }
+        break (entry, final_cmd);
+    };
     drop(ui);
 
     // Record the use, so it floats up next time
@@ -741,6 +785,155 @@ fn cmd_import_history(top: usize) -> Result<i32> {
         t!(
             "jot: 建议现在跑一次 `jot edit my` 把标题改成你看得懂的话",
             "jot: run `jot edit my` now and rewrite the titles into something you will recognise"
+        )
+    );
+    Ok(0)
+}
+
+/// Import a block of pasted text.
+///
+/// People keep commands in notes, wikis and chat logs, numbered and annotated
+/// however they felt like at the time. Retyping them one at a time through
+/// `jot save` is exactly the friction that leaves a notebook empty.
+///
+/// Nothing here is tagged with a platform: whether a command is Linux-only is
+/// the author's call, and a wrong guess would put it out of reach for anyone
+/// working over ssh or in WSL.
+fn cmd_import_text(file: Option<&str>, notebook: Option<&str>, dry_run: bool) -> Result<i32> {
+    use std::io::Read;
+
+    let paths = Paths::discover()?;
+    let cfg = Config::load(&paths);
+    let profiles = Profiles::load(&paths);
+
+    let (text, source) = match file {
+        Some("-") => {
+            let mut buf = String::new();
+            std::io::stdin().read_to_string(&mut buf)?;
+            (buf, t!("标准输入", "standard input").into_owned())
+        }
+        Some(path) => (
+            std::fs::read_to_string(path)
+                .with_context(|| t!("读不了 {}", "could not read {}", path).into_owned())?,
+            path.to_string(),
+        ),
+        None => {
+            let mut cb = arboard::Clipboard::new().map_err(|e| {
+                anyhow::anyhow!(t!(
+                    "剪贴板不可用（{e}）。改用 --file 指定文件，或 --file - 从标准输入读",
+                    "clipboard unavailable ({e}). Use --file, or --file - to read stdin"
+                ))
+            })?;
+            let got = cb.get_text().map_err(|e| {
+                anyhow::anyhow!(t!(
+                    "剪贴板里没有文本（{e}）",
+                    "no text on the clipboard ({e})"
+                ))
+            })?;
+            (got, t!("剪贴板", "the clipboard").into_owned())
+        }
+    };
+
+    let drafts = capture::parse_pasted(&text);
+    if drafts.is_empty() {
+        bail!(
+            "{}",
+            t!(
+                "{} 里没有看起来像命令的行",
+                "nothing in {} looks like a command",
+                source
+            )
+        );
+    }
+
+    let rows: Vec<String> = drafts
+        .iter()
+        .map(|d| {
+            if d.description.is_empty() {
+                d.command.clone()
+            } else {
+                format!("{}   —   {}", d.command, d.description)
+            }
+        })
+        .collect();
+
+    if dry_run {
+        println!(
+            "{}",
+            t!(
+                "从{}解析出 {} 条（--dry-run，什么都没写）",
+                "{} parsed into {} commands (--dry-run, nothing written)",
+                source,
+                drafts.len()
+            )
+        );
+        for d in &drafts {
+            println!();
+            println!("  {}", d.command);
+            if !d.description.is_empty() {
+                println!("    → {}", d.description);
+            }
+        }
+        return Ok(0);
+    }
+
+    let mut ui = Ui::new()?;
+    let picked = ui.multi_select(
+        t!(
+            "从{}导入（已归一化，空格勾选）",
+            "Import from {} (normalised; space to tick)",
+            source
+        )
+        .as_ref(),
+        &rows,
+    )?;
+    drop(ui);
+
+    let Some(picked) = picked else {
+        return Ok(EXIT_CANCEL);
+    };
+    if picked.is_empty() {
+        eprintln!("{}", t!("jot: 没有选中任何命令", "jot: nothing selected"));
+        return Ok(0);
+    }
+
+    let mut n = 0;
+    let mut path = paths.local_dir();
+    for i in picked {
+        let d = &drafts[i];
+        let (command, _) = capture::parameterize(&d.command, &profiles, cfg.profile_name());
+        // The note beside the command is the best title anyone will write, so
+        // use it rather than three words chopped off the command itself.
+        let title = if d.description.is_empty() {
+            capture::guess_title(&d.command)
+        } else {
+            d.description.clone()
+        };
+        path = capture::append(
+            &paths,
+            notebook,
+            &title,
+            "",
+            capture::guess_lang(&d.command),
+            &command,
+        )?;
+        n += 1;
+    }
+
+    eprintln!(
+        "{}",
+        t!(
+            "jot: 导入了 {n} 条 → {}",
+            "jot: imported {n} -> {}",
+            path.display()
+        )
+    );
+    eprintln!(
+        "{}",
+        t!(
+            "jot: 标题用的是你写的注释；要改就 `jot edit {}`",
+            "jot: titles came from your own notes; run `jot edit {}` to adjust",
+            notebook.unwrap_or("my")
         )
     );
     Ok(0)

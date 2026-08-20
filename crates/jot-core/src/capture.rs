@@ -1,21 +1,23 @@
-//! 捕获：从 shell 历史抓命令、写回笔记本、反向参数化。
+//! Capture: pull commands out of shell history, write them back to a
 //!
-//! 这是对抗「空笔记本」的部分（见设计文档 §6）。工具再好，笔记本是空的
-//! 就没有价值，所以录入必须比打开编辑器更省事。
+//! notebook, and reverse-parameterize them. This is the part that fights the
+//! empty notebook (design doc 6). A tool nobody fills in has no value, so
+//! capturing has to be less work than opening an editor.
 
 use crate::config::{Paths, Profiles};
+use crate::t;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// 一条历史记录及其出现次数。
+/// One history entry and how often it appears.
 #[derive(Debug, Clone)]
 pub struct HistItem {
     pub command: String,
     pub count: usize,
 }
 
-/// 各 shell 的历史文件位置。
+/// Where each shell keeps its history.
 pub fn history_files() -> Vec<PathBuf> {
     let mut v = Vec::new();
     if let Ok(appdata) = std::env::var("APPDATA") {
@@ -55,7 +57,8 @@ fn normalize_line(raw: &str) -> Option<String> {
     Some(s)
 }
 
-/// 看起来像密钥的命令不导入。宁可漏掉几条，也不能把 token 存进笔记本。
+/// Commands that look like they carry a secret are never imported. Better to
+/// miss a few than to write a token into a notebook.
 pub fn looks_secret(cmd: &str) -> bool {
     let l = cmd.to_ascii_lowercase();
     const NEEDLES: &[&str] = &[
@@ -65,6 +68,7 @@ pub fn looks_secret(cmd: &str) -> bool {
         "secret",
         "api_key",
         "apikey",
+        // Kept in Chinese on purpose: this is a detection needle, not prose
         "私钥",
         "private_key",
         "credential",
@@ -75,7 +79,7 @@ pub fn looks_secret(cmd: &str) -> bool {
     if NEEDLES.iter().any(|n| l.contains(n)) {
         return true;
     }
-    // 长串无空格的随机字符，多半是 key
+    // A long run of characters with no spaces is usually a key
     cmd.split_whitespace().any(|w| {
         w.len() >= 40
             && w.chars()
@@ -95,7 +99,7 @@ fn is_noise(cmd: &str) -> bool {
     )
 }
 
-/// 读取全部历史，按出现次数排序。
+/// Read all history, ranked by how often each command appears.
 pub fn history_ranked(limit: usize) -> Vec<HistItem> {
     let mut counts: HashMap<String, usize> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
@@ -131,7 +135,7 @@ pub fn history_ranked(limit: usize) -> Vec<HistItem> {
     items
 }
 
-/// 历史里最后一条真实命令（`jot save` 不带参数时用）。
+/// The last real command in history, used by a bare `jot save`.
 pub fn last_command() -> Option<String> {
     let mut newest: Option<(std::time::SystemTime, String)> = None;
     for file in history_files() {
@@ -156,15 +160,15 @@ pub fn last_command() -> Option<String> {
     newest.map(|(_, c)| c)
 }
 
-/// 反向参数化：命令里出现了当前 Profile 的某个值，就建议换成变量。
+/// Reverse parameterization: when a command contains one of the active
 ///
-/// 存 `sudo systemctl restart kestrel-orders-api.service` 时，如果 Profile 里
-/// `service` 正好是这个值，就自动变成 `{{service}}`。
+/// profile's values, offer to swap it for the variable. Saving
+/// `sudo systemctl restart api.service` becomes `{{service}}` automatically.
 pub fn parameterize(command: &str, profiles: &Profiles, profile: &str) -> (String, Vec<String>) {
     let mut out = command.to_string();
     let mut applied = Vec::new();
     let mut pairs: Vec<(&str, &str)> = profiles.entries(profile);
-    // 先替换长的值，避免短值先命中把长值切断
+    // Longest values first, so a short one cannot cut a longer one in half
     pairs.sort_by_key(|(_, v)| std::cmp::Reverse(v.len()));
     for (key, value) in pairs {
         if value.len() < 3 || !out.contains(value) {
@@ -176,7 +180,7 @@ pub fn parameterize(command: &str, profiles: &Profiles, profile: &str) -> (Strin
     (out, applied)
 }
 
-/// 猜一个标题：取命令的前两个有意义的词。
+/// Guess a title from the first couple of meaningful words.
 pub fn guess_title(command: &str) -> String {
     let first_line = command.lines().next().unwrap_or(command).trim();
     let words: Vec<&str> = first_line
@@ -185,13 +189,13 @@ pub fn guess_title(command: &str) -> String {
         .take(3)
         .collect();
     if words.is_empty() {
-        "新命令".to_string()
+        t!("新命令", "New command").into_owned().to_string()
     } else {
         words.join(" ")
     }
 }
 
-/// 根据命令内容猜围栏语言。
+/// Guess the fence language from the command itself.
 pub fn guess_lang(command: &str) -> &'static str {
     let l = command.trim_start().to_ascii_lowercase();
     const SQL: &[&str] = &["select ", "insert ", "update ", "delete ", "with "];
@@ -208,7 +212,7 @@ pub fn guess_lang(command: &str) -> &'static str {
     }
 }
 
-/// 往笔记本末尾追加一条。
+/// Append an entry to a notebook.
 pub fn append(
     paths: &Paths,
     notebook: Option<&str>,
@@ -311,7 +315,7 @@ mod tests {
         p.set("d", "short", "api");
         p.set("d", "long", "api.example.com");
         let (out, _) = parameterize("curl https://api.example.com/health", &p, "d");
-        assert!(out.contains("{{long}}"), "得到 {out}");
+        assert!(out.contains("{{long}}"), "got {out}");
     }
 
     #[test]

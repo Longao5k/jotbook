@@ -1,8 +1,9 @@
-//! 笔记本解析：YAML frontmatter + Markdown 二级标题 + 围栏代码块。
+//! Notebook parsing: YAML frontmatter, Markdown headings, fenced code blocks.
 //!
-//! 手写行扫描器，不引入 markdown 库：我们只关心 `## 标题`、说明段落、
-//! 以及带属性的围栏，行扫描既够用又快（冷启动预算见设计文档 D-10）。
+//! A hand-written line scanner rather than a markdown library: only headings,
+//! prose and attributed fences matter, and scanning lines is both enough and fast.
 
+use crate::t;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -15,10 +16,10 @@ pub struct VarDecl {
     /// ask | profile | shell
     #[serde(default)]
     pub from: Option<String>,
-    /// 生成候选列表的命令
+    /// Command that produces the candidate list
     #[serde(default)]
     pub cmd: Option<String>,
-    /// 固定候选
+    /// Fixed candidates
     #[serde(default)]
     pub options: Option<Vec<String>>,
 }
@@ -56,7 +57,7 @@ pub struct Entry {
     pub remote: bool,
     pub source: PathBuf,
     pub line: usize,
-    /// 来自可信位置（内置 / 本地 / 已授信的源）。不可信的条目禁用动态变量。
+    /// From a trusted location (built-in, local, or an explicitly trusted source).
     pub trusted: bool,
 }
 
@@ -65,12 +66,18 @@ impl Entry {
         self.platforms.is_empty() || self.platforms.iter().any(|p| p == plat)
     }
 
-    /// 跨会话稳定的标识，用于记使用频次。
+    /// A stable identifier across sessions, used to record usage.
+    ///
+    /// Keyed on the *command*, not the title. Titles are translated, so keying
+    /// on them would throw away everyone's frecency data the moment they ran
+    /// `jot lang` - and would do the same whenever a contributor reworded one.
+    /// The command is identical across languages, which the notebook sync test
+    /// enforces.
     pub fn id(&self) -> String {
-        format!("{}/{}", self.notebook, self.title)
+        format!("{}/{:016x}", self.notebook, fnv1a(&self.command))
     }
 
-    /// 参与模糊匹配的文本。
+    /// The text fuzzy matching runs against.
     pub fn haystack(&self) -> String {
         format!(
             "{} {} {} {} {}",
@@ -82,12 +89,12 @@ impl Entry {
         )
     }
 
-    /// 多行命令？影响注入策略（多行需要 bracketed paste）。
+    /// Multi-line? That changes injection: multi-line needs bracketed paste.
     pub fn is_multiline(&self) -> bool {
         self.command.contains('\n')
     }
 
-    /// 不可直接执行的参考条目（速查表、配置模板）。
+    /// Reference material rather than a runnable command (cheatsheets, config templates).
     pub fn is_reference(&self) -> bool {
         matches!(self.lang.as_str(), "txt" | "ini" | "yaml" | "yml")
             || self.tags.iter().any(|t| t == "reference")
@@ -104,6 +111,16 @@ pub struct Notebook {
     pub entries: Vec<Entry>,
 }
 
+/// FNV-1a. Only needs to be stable and well spread, not cryptographic.
+fn fnv1a(s: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x1000_0000_01b3);
+    }
+    hash
+}
+
 pub fn current_platform() -> &'static str {
     if cfg!(target_os = "windows") {
         "windows"
@@ -114,7 +131,7 @@ pub fn current_platform() -> &'static str {
     }
 }
 
-/// 拆出 frontmatter 与正文。
+/// Split the frontmatter from the body.
 fn split_frontmatter(text: &str) -> (Option<&str>, &str, usize) {
     let t = text.strip_prefix('\u{feff}').unwrap_or(text);
     if !t.starts_with("---") {
@@ -125,7 +142,7 @@ fn split_frontmatter(text: &str) -> (Option<&str>, &str, usize) {
         None => return (None, t, 0),
     };
     let rest = &t[after..];
-    // 找到独占一行的 ---
+    // Find the --- that sits alone on its line
     let mut offset = 0usize;
     for (lines, line) in (1usize..).zip(rest.split_inclusive('\n')) {
         if line.trim_end() == "---" {
@@ -138,7 +155,7 @@ fn split_frontmatter(text: &str) -> (Option<&str>, &str, usize) {
     (None, t, 0)
 }
 
-/// 解析围栏信息串： ```sh @platform=linux @confirm @tags=deploy
+/// Parse a fence info string: ```sh @platform=linux @confirm @tags=deploy
 struct FenceInfo {
     lang: String,
     platforms: Vec<String>,
@@ -165,7 +182,7 @@ fn parse_fence_info(info: &str) -> FenceInfo {
             Some(("platform", v)) => out
                 .platforms
                 .extend(v.split(',').map(|s| s.trim().to_ascii_lowercase())),
-            // @tags= 可以出现多次，累加
+            // @tags= may appear more than once and accumulates
             Some(("tags", v)) => out.tags.extend(v.split(',').map(|s| s.trim().to_string())),
             Some(("id", _)) => {}
             _ => match tok {
@@ -197,8 +214,16 @@ fn fence_marker(line: &str) -> Option<(usize, &str)> {
 pub fn parse(path: &Path, text: &str) -> Result<Notebook> {
     let (fm_raw, body, fm_lines) = split_frontmatter(text);
     let fm: FrontMatter = match fm_raw {
-        Some(raw) => serde_yaml::from_str(raw)
-            .with_context(|| format!("{} 的 frontmatter 不是合法 YAML", path.display()))?,
+        Some(raw) => serde_yaml::from_str(raw).with_context(|| {
+            format!(
+                "{}",
+                t!(
+                    "{} 的 frontmatter 不是合法 YAML",
+                    "the frontmatter in {} is not valid YAML",
+                    path.display()
+                )
+            )
+        })?,
         None => FrontMatter::default(),
     };
 
@@ -256,7 +281,7 @@ pub fn parse(path: &Path, text: &str) -> Result<Notebook> {
                     });
                 }
             } else {
-                // 去掉围栏本身的缩进
+                // Strip the fence's own indentation
                 let s = if fence_indent > 0 && raw_line.len() >= fence_indent {
                     let (lead, rest) = raw_line.split_at(fence_indent);
                     if lead.trim().is_empty() {
@@ -290,7 +315,7 @@ pub fn parse(path: &Path, text: &str) -> Result<Notebook> {
             title = h.trim().to_string();
             desc.clear();
         } else if t.starts_with("# ") {
-            // 一级标题当文档标题，忽略
+            // A top-level heading is the document title; ignore it
         } else if !t.is_empty() && !title.is_empty() {
             desc.push(t.to_string());
         }
@@ -312,23 +337,23 @@ mod tests {
 
     const SAMPLE: &str = r#"---
 name: demo
-description: 示例
+description: example
 tags: [t1]
 vars:
   service:
-    desc: 服务名
+    desc: service name
     from: profile
 ---
 
-## 第一条
+## First
 
-一句说明。
+One line of description.
 
 ```sh @platform=linux @confirm @tags=deploy
 sudo systemctl restart {{service}}
 ```
 
-## 第二条
+## Second
 
 ```ps1 @platform=windows
 Get-Service
@@ -343,7 +368,7 @@ Get-Service
     fn parses_frontmatter() {
         let n = nb();
         assert_eq!(n.name, "demo");
-        assert_eq!(n.description, "示例");
+        assert_eq!(n.description, "example");
         assert_eq!(n.vars["service"].source(), "profile");
     }
 
@@ -352,8 +377,8 @@ Get-Service
         let n = nb();
         assert_eq!(n.entries.len(), 2);
         let e = &n.entries[0];
-        assert_eq!(e.title, "第一条");
-        assert_eq!(e.description, "一句说明。");
+        assert_eq!(e.title, "First");
+        assert_eq!(e.description, "One line of description.");
         assert_eq!(e.command, "sudo systemctl restart {{service}}");
         assert_eq!(e.lang, "sh");
         assert!(e.confirm);

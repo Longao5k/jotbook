@@ -1,19 +1,20 @@
-//! 冷启动预算的回归守卫（设计文档 D-10：加载路径 50ms 硬指标）。
+//! Regression guard for the cold-start budget (D-10: a 50ms hard target).
 //!
-//! 这条不是假想的风险：社区源功能刚上线时，`sources::list()` 会对每个源
-//! spawn 一次 `git remote get-url`。那个函数每次加载都会跑，Windows 上一次
-//! spawn 约 45ms —— 装 3 个源就把加载从 3ms 拖到 139ms。widget 是每次按键
-//! 重启进程的，这会直接毁掉体验。
+//! Not a hypothetical: when community sources first landed, `sources::list()`
+//! ran `git remote get-url` once per source. That function runs on every load,
+//! and a spawn costs ~45ms on Windows, so three sources took it from 3ms to
+//! 139ms. The widget restarts the process on every keypress, so that hurts.
 //!
-//! 阈值取得很宽松，只为抓住数量级的回归，不会因为 CI 机器慢而误报。
+//! The threshold is loose on purpose: it catches order-of-magnitude
+//! regressions without flaking on slow CI machines.
 
 use jot_core::{Library, Paths};
 use std::path::PathBuf;
 use std::time::Instant;
 
 const SOURCES: usize = 8;
-/// 宽松到不会误报，又足以抓住「每个源一次子进程」这类回归。
-/// 参考：正常约 5–10ms；每源一次 git spawn 约 45ms × 8 ≈ 360ms。
+/// Loose enough not to flake, tight enough to catch one-spawn-per-source.
+/// For reference: normal is 5-10ms; a git spawn per source is ~45ms x 8.
 const BUDGET_MS: f64 = 150.0;
 
 fn setup() -> PathBuf {
@@ -28,7 +29,7 @@ fn setup() -> PathBuf {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("n.md"),
-            format!("---\nname: n{i}\n---\n\n## 条目 {i}\n\n```sh\necho {i}\n```\n"),
+            format!("---\nname: n{i}\n---\n\n## Entry {i}\n\n```sh\necho {i}\n```\n"),
         )
         .unwrap();
     }
@@ -40,11 +41,11 @@ fn loading_stays_within_the_cold_start_budget() {
     let root = setup();
     let paths = Paths { root };
 
-    // 第一次会落地内置笔记本，不计入
+    // The first call seeds the built-in notebooks, which is not measured
     let warm = Library::load(&paths).unwrap();
     assert!(
         warm.notebooks.len() > SOURCES,
-        "内置笔记本没被加载，这个测试没意义"
+        "the built-in notebooks were not loaded, so this test proves nothing"
     );
 
     let t0 = Instant::now();
@@ -57,11 +58,11 @@ fn loading_stays_within_the_cold_start_budget() {
             .filter(|n| n.name.starts_with("n"))
             .count()
             >= SOURCES,
-        "{SOURCES} 个外部源没被全部加载"
+        "not all {SOURCES} external sources were loaded"
     );
     assert!(
         elapsed < BUDGET_MS,
-        "装了 {SOURCES} 个源时加载耗时 {elapsed:.0}ms，超过 {BUDGET_MS:.0}ms 预算。\n\
-         最常见的原因是加载路径上出现了子进程调用（见 D-10）。",
+        "loading with {SOURCES} sources took {elapsed:.0}ms, over the {BUDGET_MS:.0}ms budget.\n\
+         The usual cause is a subprocess call on the load path (see D-10).",
     );
 }

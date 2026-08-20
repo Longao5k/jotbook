@@ -1,8 +1,10 @@
-//! jot —— 命令笔记本。
+//! jot - a notebook for your own commands.
 //!
-//! 核心约定：jot 只把命令放到你的命令行上，从不替你执行。回车永远由人按。
+//! The core promise: jot only puts a command on your prompt. It never runs
+//! anything - pressing Enter is always the human's job.
 
 mod console;
+mod locale;
 mod shellinit;
 mod tui;
 
@@ -12,6 +14,7 @@ use jot_core::builtin;
 use jot_core::capture;
 use jot_core::notebook::Entry;
 use jot_core::resolve::{self, Ask};
+use jot_core::t;
 use jot_core::vars;
 use jot_core::{Config, Library, Paths, Profiles, Usage};
 use std::collections::HashMap;
@@ -19,20 +22,20 @@ use std::path::Path;
 use std::process::Command;
 use tui::{Picked, Ui};
 
-/// 用户取消时的退出码：shell widget 靠它判断「别动命令行」。
+/// Exit code for a user cancel; the shell widget reads it as "leave the line alone".
 const EXIT_CANCEL: i32 = 130;
 
 const SUBCOMMANDS: &[&str] = &[
     "pick", "save", "ls", "list", "init", "edit", "new", "use", "profile", "import", "doctor",
-    "path", "help", "add", "sync", "sources", "remove", "trust", "untrust",
+    "path", "help", "add", "sync", "sources", "remove", "trust", "untrust", "lang",
 ];
 
 #[derive(Parser)]
 #[command(
     name = "jot",
     version,
-    about = "命令笔记本 —— 存你自己的命令，随手调出来",
-    long_about = "命令笔记本。\n\n直接运行 `jot` 打开选择器，或 `jot docker log` 带词搜索。\n选中之后 jot 把命令填到你的命令行上，回车由你自己按。"
+    about = t!("命令笔记本 —— 存你自己的命令，随手调出来", "A notebook for your own commands, one keypress away"),
+    long_about = t!("命令笔记本。\n\n直接运行 `jot` 打开选择器，或 `jot docker log` 带词搜索。\n选中之后 jot 把命令填到你的命令行上，回车由你自己按。", "A notebook for your own commands.\n\nRun `jot` for the picker, or `jot docker log` to search straight away.\nOnce you pick one, jot types it onto your prompt - you press Enter.")
 )]
 struct Cli {
     #[command(subcommand)]
@@ -41,105 +44,110 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// 打开选择器（默认命令）
+    /// Open the picker (the default)
     Pick {
-        /// 初始搜索词
+        /// Initial search term
         #[arg(long, short, default_value = "")]
         query: String,
-        /// 由 shell widget 调起：只把结果打到 stdout
+        /// Invoked by the shell widget: only the result goes to stdout
         #[arg(long)]
         widget: bool,
-        /// widget 传入的当前命令行内容，用作初始搜索词
+        /// The widget's current line, used as the initial search term
         #[arg(long, default_value = "")]
         line: String,
-        /// 不开界面，直接取最佳匹配（脚本里用）。有变量填不上就报错。
+        /// No UI, take the best match (for scripts). Errors if a variable cannot be filled.
         #[arg(long)]
         first: bool,
     },
-    /// 存一条命令；不给参数就取 shell 历史里的最后一条
+    /// Save a command; with no argument, the last one from shell history
     Save {
         command: Vec<String>,
-        /// 存到哪个个人笔记本
+        /// Which personal notebook to save into
         #[arg(long, short)]
         notebook: Option<String>,
     },
-    /// 列出全部条目
+    /// List every entry
     #[command(alias = "list")]
     Ls {
         #[arg(long, short)]
         notebook: Option<String>,
     },
-    /// 输出 shell 集成脚本
+    /// Print the shell integration script
     Init {
         /// powershell | bash | zsh | fish
         shell: String,
-        /// 自定义快捷键
+        /// Custom key binding
         #[arg(long)]
         key: Option<String>,
     },
-    /// 用编辑器打开笔记本
+    /// Open a notebook in your editor
     Edit { notebook: Option<String> },
-    /// 新建个人笔记本
+    /// Create a personal notebook
     New { name: String },
-    /// 切换 Profile
+    /// Switch profile
     Use { profile: String },
-    /// 查看或设置 Profile 变量
+    /// Show or set profile variables
     Profile {
         #[command(subcommand)]
         action: Option<ProfileCmd>,
     },
-    /// 从 shell 历史导入
+    /// Import from shell history
     Import {
         #[command(subcommand)]
         what: ImportCmd,
     },
-    /// 装一个社区笔记本源（git 仓库）
+    /// Install a community notebook source (a git repository)
     Add {
-        /// git URL，或 gh:user/repo / gl:user/repo 简写
+        /// A git URL, or the gh:user/repo / gl:user/repo shorthand
         url: String,
-        /// 自定义本地名字
+        /// Override the local name
         #[arg(long)]
         name: Option<String>,
     },
-    /// 更新社区源；不给名字就全部更新
+    /// Update sources; all of them if no name is given
     Sync { name: Option<String> },
-    /// 列出已装的社区源
+    /// List installed community sources
     Sources,
-    /// 卸载一个社区源
+    /// Uninstall a community source
     Remove { name: String },
-    /// 授信一个源，允许它的 from: shell 变量执行
+    /// Trust a source, allowing its from: shell variables to run
     Trust { name: String },
-    /// 撤销授信
+    /// Withdraw trust
     Untrust { name: String },
-    /// 自检
+    /// Show or set the interface language
+    Lang {
+        /// en | zh | auto
+        value: Option<String>,
+    },
+    /// Self-check
     Doctor,
-    /// 打印数据目录
+    /// Print the data directory
     Path,
 }
 
 #[derive(Subcommand)]
 enum ProfileCmd {
-    /// 设置一个变量
+    /// Set a variable
     Set { key: String, value: String },
-    /// 删除一个变量
+    /// Remove a variable
     Unset { key: String },
-    /// 列出所有 Profile
+    /// List every profile
     List,
 }
 
 #[derive(Subcommand)]
 enum ImportCmd {
-    /// 从 shell 历史按使用频次导入
+    /// Import from shell history, ranked by how often you use each command
     History {
         #[arg(long, default_value_t = 60)]
         top: usize,
     },
 }
 
-/// `jot docker 日志` → `jot pick --query "docker 日志"`，省掉记子命令。
+/// `jot docker logs` -> `jot pick --query "docker logs"`, so you need not
 ///
-/// 只吞到第一个 flag 为止 —— `jot docker 日志 --first` 里的 `--first` 是选项，
-/// 不是搜索词的一部分。
+/// remember the subcommand. It stops at the first flag: the `--first` in
+/// `jot docker logs --first` is an option, not part of the search term.
 fn rewrite_bare_query(args: Vec<String>) -> Vec<String> {
     let Some(first) = args.get(1) else {
         return args;
@@ -160,9 +168,10 @@ fn rewrite_bare_query(args: Vec<String>) -> Vec<String> {
 }
 
 fn main() {
-    // 作用域刻意收紧：process::exit 不跑析构函数，代码页必须在退出前还原。
+    // Scope kept tight on purpose: process::exit skips destructors, and the
+    // console code page has to be restored before we leave.
     let code = {
-        // 老 conhost 的代码页可能是 GBK，中文界面会整片乱码
+        // Legacy conhost may be on a regional code page, which mangles UTF-8
         let _console = console::Utf8Console::enter();
         match run() {
             Ok(code) => code,
@@ -176,6 +185,10 @@ fn main() {
 }
 
 fn run() -> Result<i32> {
+    // Pin the language before anything prints, including clap's own help text
+    if let Ok(paths) = Paths::discover() {
+        locale::resolve(&Config::load(&paths));
+    }
     let cli = Cli::parse_from(rewrite_bare_query(std::env::args().collect()));
     match cli.cmd {
         None => cmd_pick("", false, "", false),
@@ -201,6 +214,7 @@ fn run() -> Result<i32> {
         Some(Cmd::Remove { name }) => cmd_remove(&name),
         Some(Cmd::Trust { name }) => cmd_trust(&name, true),
         Some(Cmd::Untrust { name }) => cmd_trust(&name, false),
+        Some(Cmd::Lang { value }) => cmd_lang(value.as_deref()),
         Some(Cmd::Doctor) => cmd_doctor(),
         Some(Cmd::Path) => cmd_path(),
     }
@@ -213,8 +227,12 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
     let seeded = builtin::seed_if_missing(&paths)?;
     if seeded > 0 && !widget {
         eprintln!(
-            "jot: 已装好 {seeded} 个内置笔记本 → {}",
-            paths.builtin_dir().display()
+            "{}",
+            t!(
+                "jot: 已装好 {seeded} 个内置笔记本 → {}",
+                "jot: installed {seeded} built-in notebooks -> {}",
+                paths.builtin_dir().display()
+            )
         );
     }
 
@@ -224,7 +242,14 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
     let mut usage = Usage::load(&paths);
     let entries = lib.entries();
     if entries.is_empty() {
-        bail!("一条命令都没有。检查 {}", paths.notebooks().display());
+        bail!(
+            "{}",
+            t!(
+                "一条命令都没有。检查 {}",
+                "no commands at all. Check {}",
+                paths.notebooks().display()
+            )
+        );
     }
 
     let initial = if !query.is_empty() { query } else { line };
@@ -260,15 +285,16 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
 
     let mut values: HashMap<String, String> = HashMap::new();
     for r in vars::refs(&entry.command) {
-        // @remote 的条目在 ssh 之后使用，动态候选会在本地求值，必须禁用
+        // @remote entries are used after ssh, where dynamic candidates would
+        // still be evaluated locally, so they must be disabled
         let plan = resolve::plan(
             &r.name,
             r.default.as_deref(),
             decls.get(&r.name),
             &profiles,
             cfg.profile_name(),
-            // 不可信的外部源禁用 from: shell（D-09）；@remote 同理，
-            // 那类条目在 ssh 之后使用，动态候选会在本地求值
+            // Untrusted external sources have from: shell disabled (D-09), and so do
+            // @remote entries, whose candidates would be evaluated locally
             entry.trusted && !entry.remote,
         );
         let context = vars::render(&entry.command, &values);
@@ -299,7 +325,7 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
     }
     drop(ui);
 
-    // 用过就记一笔，下次它会自动往前排
+    // Record the use, so it floats up next time
     usage.record(&entry.id());
     let _ = usage.save(&paths);
 
@@ -307,8 +333,8 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
     Ok(0)
 }
 
-/// 非交互取最佳匹配，给脚本用。
-/// 变量只接受能自动确定的来源：Profile、内置变量、行内默认值。
+/// Take the best match without a UI, for scripts.
+/// Only variables that resolve on their own are accepted: profile, built-ins, inline defaults.
 fn cmd_pick_first(
     lib: &Library,
     entries: &[&Entry],
@@ -322,7 +348,10 @@ fn cmd_pick_first(
     use fuzzy_matcher::FuzzyMatcher;
 
     if query.trim().is_empty() {
-        bail!("--first 需要一个搜索词");
+        bail!(
+            "{}",
+            t!("--first 需要一个搜索词", "--first needs a search term")
+        );
     }
     let matcher = SkimMatcherV2::default().ignore_case();
     let best = entries
@@ -338,7 +367,10 @@ fn cmd_pick_first(
         .max_by_key(|(_, s)| *s)
         .map(|(e, _)| e);
     let Some(entry) = best else {
-        bail!("没有匹配 «{query}» 的条目");
+        bail!(
+            "{}",
+            t!("没有匹配 «{query}» 的条目", "nothing matches «{query}»")
+        );
     };
 
     let decls = lib.decls_for(entry);
@@ -366,15 +398,21 @@ fn cmd_pick_first(
         }
     }
     if !missing.is_empty() {
-        bail!(
-            "「{}」还需要这些变量：{} —— --first 模式不能交互，先用 `jot profile set` 配好",
+        bail!("{}", t!("「{}」还需要这些变量：{} —— --first 模式不能交互，先用 `jot profile set` 配好", "\"{}\" still needs: {} - --first cannot prompt, so set them with `jot profile set` first",
             entry.title,
             missing.join(", ")
-        );
+        ));
     }
 
     if entry.confirm {
-        eprintln!("jot: ⚠ 「{}」被标记为危险命令，确认后再执行", entry.title);
+        eprintln!(
+            "{}",
+            t!(
+                "jot: ⚠ 「{}」被标记为危险命令，确认后再执行",
+                "jot: warning - \"{}\" is marked dangerous; check it before running",
+                entry.title
+            )
+        );
     }
     usage.record(&entry.id());
     let _ = usage.save(paths);
@@ -384,27 +422,43 @@ fn cmd_pick_first(
     Ok(0)
 }
 
-/// 交付最终命令。jot 到此为止 —— 不执行，不发回车。
+/// Deliver the final command. jot stops here: no execution, no Enter.
 fn emit(cmd: &str, widget: bool, entry: &Entry, paths: &Paths, mut cfg: Config) {
     println!("{cmd}");
     if widget {
         return;
     }
     match copy_to_clipboard(cmd) {
-        Ok(()) => eprintln!("jot: 已复制到剪贴板"),
-        Err(_) => eprintln!("jot: 剪贴板不可用，命令已打印在上面"),
+        Ok(()) => eprintln!(
+            "{}",
+            t!("jot: 已复制到剪贴板", "jot: copied to the clipboard")
+        ),
+        Err(_) => eprintln!(
+            "{}",
+            t!(
+                "jot: 剪贴板不可用，命令已打印在上面",
+                "jot: no clipboard available; the command is printed above"
+            )
+        ),
     }
     if entry.is_reference() {
-        eprintln!("jot: 这是一条参考内容，不是可直接执行的命令");
+        eprintln!(
+            "{}",
+            t!(
+                "jot: 这是一条参考内容，不是可直接执行的命令",
+                "jot: this is reference material, not a runnable command"
+            )
+        );
     }
-    // 只在最初几次提示装 shell 集成，之后闭嘴。写配置也只发生在这几次。
+    // Suggest the shell integration only a few times, then stop. The config
+    // write is therefore confined to those first few runs.
     if cfg.hints_shown < jot_core::config::HINT_LIMIT {
         let shell = if cfg!(target_os = "windows") {
             "powershell"
         } else {
             "bash"
         };
-        eprintln!("jot: 装上 shell 集成就能直接填进命令行 → jot init {shell}");
+        eprintln!("{}", t!("jot: 装上 shell 集成就能直接填进命令行 → jot init {shell}", "jot: install the shell integration to type straight onto your prompt -> jot init {shell}"));
         cfg.hints_shown += 1;
         let _ = cfg.save(paths);
     }
@@ -425,20 +479,24 @@ fn cmd_save(command: Vec<String>, notebook: Option<String>) -> Result<i32> {
 
     let raw = if command.is_empty() {
         capture::last_command()
-            .context("shell 历史里没找到可用的命令。直接写：jot save \"你的命令\"")?
+            .context(t!("shell 历史里没找到可用的命令。直接写：jot save \"你的命令\"", "no usable command found in your shell history. Pass one instead: jot save \"your command\""))?
     } else {
         command.join(" ")
     };
 
     if capture::looks_secret(&raw) {
-        bail!("这条命令看起来含有密钥或口令，jot 拒绝存它：\n  {raw}");
+        bail!("{}", t!("这条命令看起来含有密钥或口令，jot 拒绝存它：\n  {raw}", "this looks like it contains a secret or password, so jot will not store it:\n  {raw}"));
     }
 
-    // 反向参数化：命令里出现当前 Profile 的值就换成变量
+    // Reverse parameterization: swap in variables for values from the profile
     let (parameterized, applied) = capture::parameterize(&raw, &profiles, cfg.profile_name());
 
     let mut ui = Ui::new()?;
-    let title = match ui.ask_text(&parameterized, "标题", Some(&capture::guess_title(&raw)))? {
+    let title = match ui.ask_text(
+        &parameterized,
+        t!("标题", "Title").as_ref(),
+        Some(&capture::guess_title(&raw)),
+    )? {
         Some(t) if !t.trim().is_empty() => t,
         _ => {
             drop(ui);
@@ -446,7 +504,11 @@ fn cmd_save(command: Vec<String>, notebook: Option<String>) -> Result<i32> {
         }
     };
     let desc = ui
-        .ask_text(&parameterized, "说明（可留空）", Some(""))?
+        .ask_text(
+            &parameterized,
+            t!("说明（可留空）", "Description (optional)").as_ref(),
+            Some(""),
+        )?
         .unwrap_or_default();
     drop(ui);
 
@@ -460,12 +522,19 @@ fn cmd_save(command: Vec<String>, notebook: Option<String>) -> Result<i32> {
         &parameterized,
     )?;
 
-    eprintln!("jot: 已存入 {}", path.display());
+    eprintln!(
+        "{}",
+        t!("jot: 已存入 {}", "jot: saved to {}", path.display())
+    );
     if !applied.is_empty() {
         eprintln!(
-            "jot: 自动参数化了 {} → {}",
-            applied.join(", "),
-            parameterized
+            "{}",
+            t!(
+                "jot: 自动参数化了 {} → {}",
+                "jot: parameterized {} -> {}",
+                applied.join(", "),
+                parameterized
+            )
         );
     }
     Ok(0)
@@ -480,11 +549,20 @@ fn cmd_import_history(top: usize) -> Result<i32> {
 
     let files = capture::history_files();
     if files.is_empty() {
-        bail!("没找到任何 shell 历史文件");
+        bail!(
+            "{}",
+            t!("没找到任何 shell 历史文件", "no shell history file found")
+        );
     }
     let items = capture::history_ranked(top);
     if items.is_empty() {
-        bail!("历史里没有值得导入的命令");
+        bail!(
+            "{}",
+            t!(
+                "历史里没有值得导入的命令",
+                "nothing in the history worth importing"
+            )
+        );
     }
 
     let rows: Vec<String> = items
@@ -493,14 +571,21 @@ fn cmd_import_history(top: usize) -> Result<i32> {
         .collect();
 
     let mut ui = Ui::new()?;
-    let picked = ui.multi_select("从 shell 历史导入（按使用频次排序）", &rows)?;
+    let picked = ui.multi_select(
+        t!(
+            "从 shell 历史导入（按使用频次排序）",
+            "Import from shell history (most used first)"
+        )
+        .as_ref(),
+        &rows,
+    )?;
     drop(ui);
 
     let Some(picked) = picked else {
         return Ok(EXIT_CANCEL);
     };
     if picked.is_empty() {
-        eprintln!("jot: 没有选中任何命令");
+        eprintln!("{}", t!("jot: 没有选中任何命令", "jot: nothing selected"));
         return Ok(0);
     }
 
@@ -519,14 +604,24 @@ fn cmd_import_history(top: usize) -> Result<i32> {
         n += 1;
     }
     eprintln!(
-        "jot: 导入了 {n} 条 → {}",
-        builtin::ensure_personal_notebook(&paths)?.display()
+        "{}",
+        t!(
+            "jot: 导入了 {n} 条 → {}",
+            "jot: imported {n} -> {}",
+            builtin::ensure_personal_notebook(&paths)?.display()
+        )
     );
-    eprintln!("jot: 建议现在跑一次 `jot edit my` 把标题改成你看得懂的话");
+    eprintln!(
+        "{}",
+        t!(
+            "jot: 建议现在跑一次 `jot edit my` 把标题改成你看得懂的话",
+            "jot: run `jot edit my` now and rewrite the titles into something you will recognise"
+        )
+    );
     Ok(0)
 }
 
-// ─────────────────────────── 其它子命令 ───────────────────────────
+// ─────────────────────────── other subcommands ───────────────────────────
 
 fn cmd_ls(notebook: Option<&str>) -> Result<i32> {
     let paths = Paths::discover()?;
@@ -543,10 +638,14 @@ fn cmd_ls(notebook: Option<&str>) -> Result<i32> {
             continue;
         }
         println!(
-            "\n# {}  ({} 条)  {}",
-            nb.name,
-            visible.len(),
-            nb.description
+            "{}",
+            t!(
+                "\n# {}  ({} 条)  {}",
+                "\n# {}  ({} entries)  {}",
+                nb.name,
+                visible.len(),
+                nb.description
+            )
         );
         for e in visible {
             println!("  {:<40} {}", e.title, vars::preview(&e.command));
@@ -562,8 +661,12 @@ fn cmd_init(shell: &str, key: Option<&str>) -> Result<i32> {
             Ok(0)
         }
         None => bail!(
-            "不认识的 shell «{shell}»，支持：{}",
-            shellinit::SHELLS.join(" / ")
+            "{}",
+            t!(
+                "不认识的 shell «{shell}»，支持：{}",
+                "unknown shell «{shell}». Supported: {}",
+                shellinit::SHELLS.join(" / ")
+            )
         ),
     }
 }
@@ -580,7 +683,13 @@ fn cmd_edit(notebook: Option<&str>) -> Result<i32> {
             } else if builtin_p.exists() {
                 builtin_p
             } else {
-                bail!("没有叫 «{n}» 的笔记本。已有的看 `jot ls`");
+                bail!(
+                    "{}",
+                    t!(
+                        "没有叫 «{n}» 的笔记本。已有的看 `jot ls`",
+                        "no notebook called «{n}». See `jot ls` for what you have"
+                    )
+                );
             }
         }
         None => builtin::ensure_personal_notebook(&paths)?,
@@ -594,7 +703,10 @@ fn cmd_new(name: &str) -> Result<i32> {
     paths.ensure()?;
     let path = paths.local_dir().join(format!("{name}.md"));
     if path.exists() {
-        bail!("{} 已经存在了", path.display());
+        bail!(
+            "{}",
+            t!("{} 已经存在了", "{} already exists", path.display())
+        );
     }
     std::fs::write(
         &path,
@@ -602,7 +714,10 @@ fn cmd_new(name: &str) -> Result<i32> {
             "---\nname: {name}\ndescription: \ntags: []\n---\n\n## 第一条命令\n\n说明写在这里。\n\n```sh\necho {{{{name}}}}\n```\n"
         ),
     )?;
-    eprintln!("jot: 建好了 {}", path.display());
+    eprintln!(
+        "{}",
+        t!("jot: 建好了 {}", "jot: created {}", path.display())
+    );
     open_editor(&path)?;
     Ok(0)
 }
@@ -613,10 +728,16 @@ fn cmd_use(profile: &str) -> Result<i32> {
     cfg.profile = Some(profile.to_string());
     cfg.save(&paths)?;
     let profiles = Profiles::load(&paths);
-    eprintln!("jot: 当前 Profile → {profile}");
+    eprintln!(
+        "{}",
+        t!(
+            "jot: 当前 Profile → {profile}",
+            "jot: active profile -> {profile}"
+        )
+    );
     let entries = profiles.entries(profile);
     if entries.is_empty() {
-        eprintln!("jot: 这个 Profile 还没有变量，用 `jot profile set 键 值` 加一个");
+        eprintln!("{}", t!("jot: 这个 Profile 还没有变量，用 `jot profile set 键 值` 加一个", "jot: this profile has no variables yet; add one with `jot profile set <key> <value>`"));
     } else {
         for (k, v) in entries {
             eprintln!("  {k} = {v}");
@@ -633,10 +754,13 @@ fn cmd_profile(action: Option<ProfileCmd>) -> Result<i32> {
 
     match action {
         None => {
-            println!("当前 Profile: {current}");
+            println!(
+                "{}",
+                t!("当前 Profile: {current}", "Active profile: {current}")
+            );
             let entries = profiles.entries(&current);
             if entries.is_empty() {
-                println!("（还没有变量）");
+                println!("{}", t!("（还没有变量）", "(no variables yet)"));
             }
             for (k, v) in entries {
                 println!("  {k} = {v}");
@@ -658,13 +782,19 @@ fn cmd_profile(action: Option<ProfileCmd>) -> Result<i32> {
                 m.remove(&key);
             }
             profiles.save(&paths)?;
-            eprintln!("jot: [{current}] 已删除 {key}");
+            eprintln!(
+                "{}",
+                t!(
+                    "jot: [{current}] 已删除 {key}",
+                    "jot: [{current}] removed {key}"
+                )
+            );
         }
     }
     Ok(0)
 }
 
-// ─────────────────────────── 社区源 ───────────────────────────
+// ─────────────────────────── community sources ───────────────────────────
 
 fn cmd_add(url: &str, name: Option<&str>) -> Result<i32> {
     let paths = Paths::discover()?;
@@ -679,16 +809,26 @@ fn cmd_add(url: &str, name: Option<&str>) -> Result<i32> {
         .map(|nb| nb.entries.len())
         .sum();
 
-    eprintln!("jot: 装好 «{}» → {} 条命令", src.name, n);
+    eprintln!(
+        "{}",
+        t!(
+            "jot: 装好 «{}» → {} 条命令",
+            "jot: installed «{}» -> {} commands",
+            src.name,
+            n
+        )
+    );
     if n == 0 {
-        eprintln!(
-            "jot: 这个仓库里没找到可用的笔记本。jot 会看 notebooks/ 子目录，没有就看仓库根的 *.md"
-        );
+        eprintln!("{}", t!("jot: 这个仓库里没找到可用的笔记本。jot 会看 notebooks/ 子目录，没有就看仓库根的 *.md", "jot: no usable notebooks in that repository. jot looks in notebooks/, falling back to *.md at the repo root"
+        ));
     }
     eprintln!(
-        "jot: 外部源的动态变量（from: shell）默认禁用 —— 那是任意代码执行。
-     看过内容确认没问题后用 `jot trust {}` 打开。",
-        src.name
+        "{}",
+        t!(
+            "jot: 外部源的动态变量（from: shell）默认禁用 —— 那是任意代码执行。\n     看过内容确认没问题后用 `jot trust {}` 打开。",
+            "jot: dynamic variables (from: shell) are disabled for external sources -\n     that is arbitrary code execution. Read the notebook first, then allow\n     it with `jot trust {}`.",
+            src.name
+        )
     );
     Ok(0)
 }
@@ -698,20 +838,43 @@ fn cmd_sync(name: Option<&str>) -> Result<i32> {
     let cfg = Config::load(&paths);
     let all = jot_core::sources::list(&paths, &cfg.trusted_sources);
     if all.is_empty() {
-        bail!("还没装任何社区源。用 `jot add gh:user/repo` 装一个");
+        bail!(
+            "{}",
+            t!(
+                "还没装任何社区源。用 `jot add gh:user/repo` 装一个",
+                "no community sources installed. Add one with `jot add gh:user/repo`"
+            )
+        );
     }
     let targets: Vec<_> = match name {
         Some(n) => all.into_iter().filter(|s| s.name == n).collect(),
         None => all,
     };
     if targets.is_empty() {
-        bail!("没有叫 «{}» 的源", name.unwrap_or(""));
+        bail!(
+            "{}",
+            t!(
+                "没有叫 «{}» 的源",
+                "no source called «{}»",
+                name.unwrap_or("")
+            )
+        );
     }
     for src in &targets {
         match jot_core::sources::sync(src) {
-            Ok(true) => eprintln!("jot: {} 已更新", src.name),
-            Ok(false) => eprintln!("jot: {} 已是最新", src.name),
-            Err(e) => eprintln!("jot: {} 更新失败：{e}", src.name),
+            Ok(true) => eprintln!("{}", t!("jot: {} 已更新", "jot: {} updated", src.name)),
+            Ok(false) => eprintln!(
+                "{}",
+                t!("jot: {} 已是最新", "jot: {} already up to date", src.name)
+            ),
+            Err(e) => eprintln!(
+                "{}",
+                t!(
+                    "jot: {} 更新失败：{e}",
+                    "jot: {} could not be updated: {e}",
+                    src.name
+                )
+            ),
         }
     }
     Ok(0)
@@ -723,7 +886,10 @@ fn cmd_sources() -> Result<i32> {
     let lib = Library::load(&paths)?;
     let all = jot_core::sources::list(&paths, &cfg.trusted_sources);
     if all.is_empty() {
-        println!("还没装任何社区源。");
+        println!(
+            "{}",
+            t!("还没装任何社区源。", "No community sources installed.")
+        );
         println!("  jot add gh:user/repo");
         return Ok(0);
     }
@@ -736,15 +902,19 @@ fn cmd_sources() -> Result<i32> {
             .map(|nb| nb.entries.len())
             .sum();
         println!(
-            "{:<20} {:>4} 条   {}   {}",
-            src.name,
-            n,
-            if src.trusted {
-                "已授信"
-            } else {
-                "未授信"
-            },
-            src.remote_url().unwrap_or_default()
+            "{}",
+            t!(
+                "{:<20} {:>4} 条   {}   {}",
+                "{:<20} {:>4}   {}   {}",
+                src.name,
+                n,
+                if src.trusted {
+                    t!("已授信", "trusted")
+                } else {
+                    t!("未授信", "untrusted")
+                },
+                src.remote_url().unwrap_or_default()
+            )
         );
     }
     Ok(0)
@@ -756,7 +926,7 @@ fn cmd_remove(name: &str) -> Result<i32> {
     let mut cfg = Config::load(&paths);
     cfg.trusted_sources.retain(|t| t != name);
     cfg.save(&paths)?;
-    eprintln!("jot: 已卸载 «{name}»");
+    eprintln!("{}", t!("jot: 已卸载 «{name}»", "jot: removed «{name}»"));
     Ok(0)
 }
 
@@ -767,7 +937,13 @@ fn cmd_trust(name: &str, on: bool) -> Result<i32> {
         .iter()
         .any(|s| s.name == name);
     if !exists {
-        bail!("没有叫 «{name}» 的源。已装的看 `jot sources`");
+        bail!(
+            "{}",
+            t!(
+                "没有叫 «{name}» 的源。已装的看 `jot sources`",
+                "no source called «{name}». See `jot sources` for what you have"
+            )
+        );
     }
     cfg.trusted_sources.retain(|t| t != name);
     if on {
@@ -777,10 +953,65 @@ fn cmd_trust(name: &str, on: bool) -> Result<i32> {
     eprintln!(
         "jot: «{name}» {}",
         if on {
-            "已授信 —— 它的 from: shell 变量现在会真的执行"
+            t!(
+                "已授信 —— 它的 from: shell 变量现在会真的执行",
+                "trusted - its from: shell variables will now actually run"
+            )
         } else {
-            "已撤销授信"
+            t!("已撤销授信", "no longer trusted")
         }
+    );
+    Ok(0)
+}
+
+fn cmd_lang(value: Option<&str>) -> Result<i32> {
+    let paths = Paths::discover()?;
+    let mut cfg = Config::load(&paths);
+
+    let Some(value) = value else {
+        println!(
+            "{}",
+            t!(
+                "当前语言        {} （来自 {}）",
+                "language        {} (from {})",
+                jot_core::i18n::lang().code(),
+                locale::source(&cfg)
+            )
+        );
+        println!(
+            "{}",
+            t!(
+                "可选            en / zh / auto",
+                "options         en / zh / auto"
+            )
+        );
+        return Ok(0);
+    };
+
+    let normalised = value.trim().to_ascii_lowercase();
+    cfg.lang = match normalised.as_str() {
+        "auto" | "" => None,
+        other => match jot_core::Lang::parse(other) {
+            Some(l) => Some(l.code().to_string()),
+            None => bail!(t!(
+                "不认识的语言 «{value}»，支持 en / zh / auto",
+                "unknown language «{value}». Supported: en / zh / auto"
+            )),
+        },
+    };
+    cfg.save(&paths)?;
+
+    // Re-resolve and re-seed so the built-in notebooks switch language too
+    let lang = locale::resolve(&cfg);
+    let seeded = builtin::seed_if_missing(&paths)?;
+    eprintln!(
+        "{}",
+        t!(
+            "jot: 语言 → {}，已切换 {} 个内置笔记本",
+            "jot: language -> {}, switched {} built-in notebooks",
+            lang.code(),
+            seeded
+        )
     );
     Ok(0)
 }
@@ -799,42 +1030,117 @@ fn cmd_doctor() -> Result<i32> {
     let plat = jot_core::notebook::current_platform();
 
     println!("jot {}", env!("CARGO_PKG_VERSION"));
-    println!("平台            {plat}");
-    println!("数据目录        {}", paths.root.display());
-    println!("笔记本          {} 个", lib.notebooks.len());
+    println!("{}", t!("平台            {plat}", "platform        {plat}"));
     println!(
-        "条目            {} 条（当前平台可见 {} 条）",
-        lib.notebooks.iter().map(|n| n.entries.len()).sum::<usize>(),
-        lib.entry_count()
+        "{}",
+        t!(
+            "数据目录        {}",
+            "data directory  {}",
+            paths.root.display()
+        )
     );
-    println!("加载耗时        {:.1} ms", lib.load_ms);
-    println!("当前 Profile    {}", cfg.profile_name());
     println!(
-        "Profile 变量    {} 个",
-        profiles.entries(cfg.profile_name()).len()
+        "{}",
+        t!(
+            "笔记本          {} 个",
+            "notebooks       {}",
+            lib.notebooks.len()
+        )
+    );
+    println!(
+        "{}",
+        t!(
+            "条目            {} 条（当前平台可见 {} 条）",
+            "entries         {} ({} visible on this platform)",
+            lib.notebooks.iter().map(|n| n.entries.len()).sum::<usize>(),
+            lib.entry_count()
+        )
+    );
+    println!(
+        "{}",
+        t!(
+            "加载耗时        {:.1} ms",
+            "load time       {:.1} ms",
+            lib.load_ms
+        )
+    );
+    println!(
+        "{}",
+        t!(
+            "当前 Profile    {}",
+            "profile         {}",
+            cfg.profile_name()
+        )
+    );
+    println!(
+        "{}",
+        t!(
+            "Profile 变量    {} 个",
+            "profile vars    {}",
+            profiles.entries(cfg.profile_name()).len()
+        )
     );
 
+    println!(
+        "{}",
+        t!(
+            "语言            {} （来自 {}）",
+            "language        {} (from {})",
+            jot_core::i18n::lang().code(),
+            locale::source(&cfg)
+        )
+    );
     let usage = jot_core::Usage::load(&paths);
-    println!("累计使用        {} 次", usage.total_uses());
+    println!(
+        "{}",
+        t!(
+            "累计使用        {} 次",
+            "total uses      {}",
+            usage.total_uses()
+        )
+    );
+    // Usage ids are command hashes, so resolve them back to titles for display
+    let titles: std::collections::HashMap<String, String> = lib
+        .notebooks
+        .iter()
+        .flat_map(|n| n.entries.iter())
+        .map(|e| (e.id(), format!("{} / {}", e.notebook, e.title)))
+        .collect();
     let top = usage.top(5);
     if !top.is_empty() {
-        println!("最常用");
+        println!("{}", t!("最常用", "most used"));
         for (id, stat) in top {
-            println!("  {:>4}×  {id}", stat.count);
+            let label = titles.get(id).map(String::as_str).unwrap_or(id);
+            println!("  {:>4}x  {label}", stat.count);
         }
     }
 
     let hist = capture::history_files();
     if hist.is_empty() {
-        println!("shell 历史      没找到（`jot save` 需要手动给命令）");
+        println!(
+            "{}",
+            t!(
+                "shell 历史      没找到（`jot save` 需要手动给命令）",
+                "shell history   none found (`jot save` will need the command passed in)"
+            )
+        );
     } else {
         for h in &hist {
-            println!("shell 历史      {}", h.display());
+            println!(
+                "{}",
+                t!("shell 历史      {}", "shell history   {}", h.display())
+            );
         }
     }
 
     if lib.load_ms > 50.0 {
-        println!("\n⚠ 加载超过 50ms 预算，widget 会感觉到卡。");
+        println!(
+            "{}",
+            t!(
+                "\n⚠ 加载超过 50ms 预算，widget 会感觉到卡。",
+                "\nWarning: load exceeds the 50ms budget, so the shell widget will feel sluggish."
+            )
+        );
     }
     let local_count: usize = lib
         .notebooks
@@ -843,9 +1149,21 @@ fn cmd_doctor() -> Result<i32> {
         .map(|n| n.entries.len())
         .sum();
     if local_count == 0 {
-        println!("\n你还没有存过自己的命令。试试：");
+        println!(
+            "{}",
+            t!(
+                "\n你还没有存过自己的命令。试试：",
+                "\nYou have not saved any of your own commands yet. Try:"
+            )
+        );
         println!("  jot import history --top 40");
-        println!("  jot save \"你刚敲过的那条命令\"");
+        println!(
+            "{}",
+            t!(
+                "  jot save \"你刚敲过的那条命令\"",
+                "  jot save \"the command you just ran\""
+            )
+        );
     }
     Ok(0)
 }
@@ -887,28 +1205,33 @@ mod tests {
     #[test]
     fn bare_words_become_a_query() {
         assert_eq!(
-            rw(&["docker", "日志"]),
-            ["jot", "pick", "--query", "docker 日志"]
+            rw(&["docker", "logs"]),
+            ["jot", "pick", "--query", "docker logs"]
         );
     }
 
-    /// 回归：flag 曾经被一起吞进搜索词，导致 `jot docker --first` 不工作。
+    /// Regression: flags used to be swallowed into the search term, which
+    /// broke `jot docker --first`.
     #[test]
     fn flags_after_a_bare_query_stay_flags() {
         assert_eq!(
-            rw(&["docker", "日志", "--first"]),
-            ["jot", "pick", "--query", "docker 日志", "--first"]
+            rw(&["docker", "logs", "--first"]),
+            ["jot", "pick", "--query", "docker logs", "--first"]
         );
         assert_eq!(
-            rw(&["git", "--first", "撤销"]),
-            ["jot", "pick", "--query", "git", "--first", "撤销"]
+            rw(&["git", "--first", "undo"]),
+            ["jot", "pick", "--query", "git", "--first", "undo"]
         );
     }
 
     #[test]
     fn real_subcommands_are_left_alone() {
         for sub in ["save", "ls", "doctor", "init", "profile"] {
-            assert_eq!(rw(&[sub])[1], sub, "子命令 {sub} 被当成搜索词了");
+            assert_eq!(
+                rw(&[sub])[1],
+                sub,
+                "subcommand {sub} was treated as a search term"
+            );
         }
     }
 

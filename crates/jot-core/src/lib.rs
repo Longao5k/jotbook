@@ -1,10 +1,11 @@
-//! Jotbook 核心：解析笔记本、求值变量、管理 Profile。
+//! Jotbook core: parsing notebooks, resolving variables, managing profiles.
 //!
-//! 这个 crate 不做任何终端交互，两个前端（CLI / GUI）共享它。
+//! No terminal interaction lives here; both front ends share this crate.
 
 pub mod builtin;
 pub mod capture;
 pub mod config;
+pub mod i18n;
 pub mod notebook;
 pub mod resolve;
 pub mod sources;
@@ -12,6 +13,7 @@ pub mod usage;
 pub mod vars;
 
 pub use config::{Config, Paths, Profiles};
+pub use i18n::Lang;
 pub use notebook::{Entry, Notebook, VarDecl};
 pub use sources::Source;
 pub use usage::Usage;
@@ -20,7 +22,7 @@ pub use vars::{Seg, VarRef};
 use anyhow::Result;
 use std::time::Instant;
 
-/// 读一个目录里的 .md。单个文件写坏不应该让整个工具起不来。
+/// Read the .md files in one directory. One broken file must not stop the tool starting.
 fn load_dir(dir: &std::path::Path, trusted: bool, skip_boilerplate: bool, out: &mut Vec<Notebook>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
@@ -43,26 +45,29 @@ fn load_dir(dir: &std::path::Path, trusted: bool, skip_boilerplate: bool, out: &
                         e.trusted = false;
                     }
                 }
-                // 外部源里的普通 markdown 常常一条命令都没有，不要污染列表
+                // Ordinary markdown in an external source often has no commands at all
                 if !nb.entries.is_empty() {
                     out.push(nb);
                 }
             }
-            Err(e) => eprintln!("jot: 跳过 {}: {e}", path.display()),
+            Err(e) => eprintln!(
+                "{}",
+                t!("jot: 跳过 {}: {e}", "jot: skipping {}: {e}", path.display())
+            ),
         }
     }
 }
 
-/// 全部笔记本 + 一次加载的耗时统计。
+/// Every notebook, plus how long one load took.
 pub struct Library {
     pub notebooks: Vec<Notebook>,
     pub load_ms: f64,
 }
 
 impl Library {
-    /// 从数据目录加载全部笔记本。首次运行会自动落地内置笔记本。
+    /// Load every notebook. The first run seeds the built-in ones.
     pub fn load(paths: &Paths) -> Result<Library> {
-        // 落地内置笔记本只在首次运行发生，不该算进稳态加载耗时
+        // Seeding only happens on the first run and must not count towards steady-state load time
         paths.ensure()?;
         builtin::seed_if_missing(paths)?;
 
@@ -70,11 +75,11 @@ impl Library {
         let trusted = Config::load(paths).trusted_sources;
         let mut notebooks = Vec::new();
 
-        // 自带的和用户自己的：完全信任
+        // Shipped and personal notebooks: fully trusted
         for dir in paths.notebook_dirs() {
             load_dir(&dir, true, false, &mut notebooks);
         }
-        // 外部源：默认不信任，from: shell 会被禁用（D-09）
+        // External sources: untrusted, so from: shell is disabled (D-09)
         for src in sources::list(paths, &trusted) {
             let dir = sources::notebook_dir(&src.path);
             load_dir(&dir, src.trusted, true, &mut notebooks);
@@ -86,7 +91,7 @@ impl Library {
         })
     }
 
-    /// 当前平台可见的全部条目。
+    /// Every entry visible on the current platform.
     pub fn entries(&self) -> Vec<&Entry> {
         let plat = notebook::current_platform();
         self.notebooks
@@ -100,10 +105,10 @@ impl Library {
         self.entries().len()
     }
 
-    /// 找到条目所属笔记本的变量声明表。
+    /// The variable declarations of the notebook an entry belongs to.
     ///
-    /// 按文件路径匹配而不是按 name —— `builtin/git.md` 和 `local/git.md` 可以同名，
-    /// 按 name 找会拿到错误那本的变量声明。
+    /// Matched by path rather than name: `builtin/git.md` and `local/git.md` may
+    /// share a name, and matching by name would return the wrong declarations.
     pub fn decls_for(&self, entry: &Entry) -> &std::collections::BTreeMap<String, VarDecl> {
         static EMPTY: std::sync::OnceLock<std::collections::BTreeMap<String, VarDecl>> =
             std::sync::OnceLock::new();
@@ -120,7 +125,7 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    /// 两本同名笔记本（builtin 和 local 各一份）必须各用各的变量声明。
+    /// Two same-named notebooks must keep their own variable declarations.
     #[test]
     fn same_named_notebooks_keep_their_own_vars() {
         let a = notebook::parse(
@@ -142,7 +147,7 @@ mod tests {
         assert_eq!(
             lib.decls_for(&entry_b)["x"].source(),
             "shell",
-            "拿到了同名另一本笔记本的变量声明"
+            "picked up the variable declarations of a same-named notebook"
         );
     }
 }

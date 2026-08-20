@@ -35,6 +35,7 @@ $ docker logs -f --tail 200 kestrel-api▏
 
 ## 特点
 
+- **中英双语** —— 界面和内置笔记本一起切换，`jot lang` 一条命令搞定
 - **开箱不是空的** —— 内置 19 个笔记本、630+ 条命令：
   git · linux · macos · powershell · ssh · tmux · docker · kubectl · nginx · systemd · dotnet · flutter · npm · python · mssql · mysql · postgres · redis
 - **越用越顺手** —— 常用和最近用过的条目自动往上浮。搜索框空着时，列表就是你最常用的那几条
@@ -115,6 +116,7 @@ jot                                                      # 开始用
 | `jot sync [名字]` | 更新源 |
 | `jot trust <名字>` | 授信，允许该源的 `from: shell` 变量真的执行 |
 | `jot remove <名字>` | 卸载一个源 |
+| `jot lang [en\|zh\|auto]` | 查看或设置界面与笔记本语言 |
 | `jot doctor` | 自检 |
 | `jot path` | 打印数据目录 |
 | `jot pick -q "<词>" --first` | 不开界面，最佳匹配直接打到 stdout（脚本用） |
@@ -193,12 +195,26 @@ jot trust someone-jot-notebooks
 
 未授信不影响其它功能。而且命令本身依然只是被**打到你的命令行上**，从不执行。
 
+## 语言
+
+jot 说中英两种语言。界面和内置笔记本一起切换 —— 条目的标题和说明也会跟着变成你读得懂的那种。
+
+```bash
+jot lang zh
+```
+
+优先级：显式的 `jot lang` 设置 → `JOT_LANG` 或常规 locale 变量 → 操作系统语言 → 英文。
+`jot lang auto` 把控制权交回环境变量。
+
+**两种语言里命令本身完全相同**，只有说明文字不同，这一点有测试强制保证。
+仓库里笔记本放在 `notebooks/en/` 和 `notebooks/zh/`，落地到 `~/.jot/notebooks/builtin/` 的只有当前语言那一套。
+
 ## 数据放在哪
 
 ```
 ~/.jot/
 ├── notebooks/
-│   ├── builtin/     随二进制发布，升级时会被重写
+│   ├── builtin/     随二进制发布的当前语言那一套，升级时会被重写
 │   ├── local/       你自己的，永远不会被动
 │   └── sources/     社区源（git 克隆），默认不可信
 ├── config.toml      当前 Profile
@@ -210,7 +226,7 @@ jot trust someone-jot-notebooks
 
 ## 参与贡献
 
-**笔记本是最有价值的贡献。** 给 `notebooks/*.md` 加命令的 PR 完全不需要写 Rust，按上面的格式写 Markdown 就行。比起把 `--help` 抄一遍，那些**人真的记不住**的命令价值高得多。
+**笔记本是最有价值的贡献。** 给 `notebooks/zh/*.md` 加命令的 PR 完全不需要写 Rust，按上面的格式写 Markdown 就行。有余力的话把对应的 `notebooks/en/*.md` 也补上 —— 有测试检查两种语言的结构必须完全一致。比起把 `--help` 抄一遍，那些**人真的记不住**的命令价值高得多。
 
 要改客户端本身的话，动大工程之前先看 [docs/design.html](docs/design.html)，里面有架构、关键决策记录和非目标。
 

@@ -1,8 +1,9 @@
-//! 数据目录、config.toml、profiles.toml。
+//! The data directory, config.toml and profiles.toml.
 //!
-//! 全部是本地纯文本：notebooks 可以扔进 git，profiles 存的是你自己环境里的
-//! 常量（服务名、主机、库名），刻意不进 git。
+//! All local plain text: notebooks can go into git, while profiles hold the
+//! constants of your own environment and are deliberately kept out of it.
 
+use crate::t;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -15,7 +16,7 @@ pub struct Paths {
 
 impl Paths {
     pub fn discover() -> Result<Paths> {
-        // JOT_HOME 优先，方便测试和便携部署
+        // JOT_HOME wins, which makes tests and portable installs easy
         if let Ok(p) = std::env::var("JOT_HOME") {
             if !p.trim().is_empty() {
                 return Ok(Paths {
@@ -23,7 +24,10 @@ impl Paths {
                 });
             }
         }
-        let home = dirs::home_dir().context("找不到用户主目录")?;
+        let home = dirs::home_dir().context(t!(
+            "找不到用户主目录",
+            "cannot find the user's home directory"
+        ))?;
         Ok(Paths {
             root: home.join(".jot"),
         })
@@ -53,7 +57,7 @@ impl Paths {
 
     pub fn notebook_dirs(&self) -> Vec<PathBuf> {
         let mut v = vec![self.builtin_dir(), self.local_dir()];
-        // notebooks/ 根目录下的散装 md 也收
+        // Loose .md files directly under notebooks/ count too
         v.push(self.notebooks());
         v
     }
@@ -67,21 +71,27 @@ impl Paths {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
-    /// 当前激活的 Profile 名
+    /// The active profile name
     #[serde(default)]
     pub profile: Option<String>,
-    /// 内置笔记本已落地的版本，用于升级时判断
+    /// Which version of the built-in notebooks is on disk
     #[serde(default)]
     pub builtin_version: Option<String>,
-    /// 「装 shell 集成」的提示已经显示过几次。显示够了就不再唠叨。
+    /// How often the "install the shell integration" hint has been shown.
     #[serde(default)]
     pub hints_shown: u32,
-    /// 被显式授信的外部源。只有这些源的 from: shell 变量才会真的执行。
+    /// Explicitly trusted external sources. Only these get to run from: shell.
     #[serde(default)]
     pub trusted_sources: Vec<String>,
+    /// Interface language chosen by the user: "en" / "zh". None follows the environment.
+    #[serde(default)]
+    pub lang: Option<String>,
+    /// Which language's notebooks are currently in builtin/
+    #[serde(default)]
+    pub builtin_lang: Option<String>,
 }
 
-/// 同一条提示最多说这么多次。
+/// How many times a hint is worth repeating.
 pub const HINT_LIMIT: u32 = 3;
 
 impl Config {

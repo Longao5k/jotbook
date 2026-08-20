@@ -1,13 +1,14 @@
-//! 终端界面。
+//! The terminal interface.
 //!
-//! 全部画到 stderr —— stdout 要留给结果本身，shell widget 靠它拿到最终命令
-//! （见设计文档 §4.2 的 widget 协议）。
+//! Everything is drawn to stderr: stdout belongs to the result, which is how
+//! the shell widget receives the final command (widget protocol, design doc 4.2).
 
 use anyhow::Result;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use jot_core::notebook::Entry;
 use jot_core::resolve::Choice;
+use jot_core::t;
 use jot_core::Usage;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::crossterm::execute;
@@ -31,11 +32,10 @@ pub struct Ui {
 
 impl Ui {
     pub fn new() -> Result<Ui> {
-        // widget 模式下 stdout 是管道，但 stderr 仍然是终端 —— 界面画在 stderr 上
+        // In widget mode stdout is a pipe but stderr is still the terminal, which is where the UI goes
         if !std::io::IsTerminal::is_terminal(&std::io::stderr()) {
-            anyhow::bail!(
-                "jot 需要一个真正的终端。要在脚本里用请加 --first，例如：\n  jot pick --query \"docker 日志\" --first"
-            );
+            anyhow::bail!("{}", t!("jot 需要一个真正的终端。要在脚本里用请加 --first，例如：\n  jot pick --query \"docker 日志\" --first", "jot needs a real terminal. For scripts add --first, for example:\n  jot pick --query \"docker logs\" --first"
+            ));
         }
         enable_raw_mode()?;
         let mut err = std::io::stderr();
@@ -64,7 +64,7 @@ fn score(matcher: &SkimMatcherV2, hay: &str, needle: &str) -> Option<i64> {
     if needle.is_empty() {
         return Some(0);
     }
-    // 空格分词，每段都要命中（类似 fzf 的 AND 语义）
+    // Split on spaces and require every part to match, like fzf's AND semantics
     let mut total = 0i64;
     for part in needle.split_whitespace() {
         total += matcher.fuzzy_match(hay, part)?;
@@ -72,11 +72,11 @@ fn score(matcher: &SkimMatcherV2, hay: &str, needle: &str) -> Option<i64> {
     Some(total)
 }
 
-/// 按**终端列数**截断，不是字符数。
+/// Truncate by **terminal columns**, not by character count.
 ///
-/// 中文一个字占两列。用 `chars().count()` 的话中文标题根本不会触发省略号，
-/// 而是被终端直接切掉 —— 行尾的笔记本名和 ⚠ 标记会一起消失。内置笔记本
-/// 全是中文标题，所以这条一定会踩到。
+/// A CJK character occupies two columns. With `chars().count()` a Chinese
+/// title never triggers the ellipsis and is instead clipped by the terminal,
+/// taking the notebook name and the danger marker off screen with it.
 fn clamp_line(s: &str, max: usize) -> String {
     use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -84,7 +84,7 @@ fn clamp_line(s: &str, max: usize) -> String {
     if s.width() <= max {
         return s;
     }
-    // 留一列给省略号
+    // Leave one column for the ellipsis
     let budget = max.saturating_sub(1);
     let mut out = String::new();
     let mut used = 0usize;
@@ -100,8 +100,9 @@ fn clamp_line(s: &str, max: usize) -> String {
     out
 }
 
-/// 主选择器的渲染。抽成自由函数是为了能用 ratatui 的 TestBackend 离线断言 ——
-/// 交互没法在测试里驱动，但「画出来对不对、窄终端会不会 panic」可以。
+/// Rendering for the picker. A free function so ratatui's TestBackend can
+/// assert on it offline. The interaction cannot be driven from a test, but
+/// "does it draw the right thing" and "does a narrow terminal panic" can.
 pub(crate) fn draw_picker(
     f: &mut Frame,
     entries: &[&Entry],
@@ -123,7 +124,7 @@ pub(crate) fn draw_picker(
         ])
         .split(area);
 
-    // ── 搜索框 ──
+    // ── search box ──
     let title = format!(" jot  {}/{} ", hits.len(), entries.len());
     let search = Paragraph::new(Line::from(vec![
         Span::styled("› ", Style::default().fg(ACCENT)),
@@ -141,7 +142,7 @@ pub(crate) fn draw_picker(
     );
     f.render_widget(search, chunks[0]);
 
-    // ── 结果列表 ──
+    // ── results ──
     let width = chunks[1].width.saturating_sub(4) as usize;
     let items: Vec<ListItem> = hits
         .iter()
@@ -177,7 +178,7 @@ pub(crate) fn draw_picker(
         .highlight_symbol("❯ ");
     f.render_stateful_widget(list, chunks[1], state);
 
-    // ── 详情 + 帮助 ──
+    // ── detail and help ──
     let mut detail: Vec<Line> = Vec::new();
     if let Some(e) = sel_entry {
         if !e.description.is_empty() {
@@ -188,13 +189,19 @@ pub(crate) fn draw_picker(
         }
         if e.confirm {
             detail.push(Line::from(Span::styled(
-                "⚠ 危险命令，使用前会再确认一次",
+                t!(
+                    "⚠ 危险命令，使用前会再确认一次",
+                    "Dangerous command - you will be asked to confirm"
+                ),
                 Style::default().fg(WARN),
             )));
         }
     }
     detail.push(Line::from(Span::styled(
-        "↑↓ 选择   ⏎ 使用   ^E 打开文件   esc 取消",
+        t!(
+            "↑↓ 选择   ⏎ 使用   ^E 打开文件   esc 取消",
+            "up/down move   enter use   ^E open file   esc cancel"
+        ),
         Style::default().fg(DIM),
     )));
 
@@ -207,11 +214,11 @@ pub(crate) fn draw_picker(
 }
 
 impl Ui {
-    /// 主选择器。
+    /// The picker.
     pub fn pick(&mut self, entries: &[&Entry], initial: &str, usage: &Usage) -> Result<Picked> {
         let matcher = SkimMatcherV2::default().ignore_case();
         let hays: Vec<String> = entries.iter().map(|e| e.haystack()).collect();
-        // 常用度加权预先算好，每次按键都要用
+        // Frecency weights are precomputed; they are needed on every keystroke
         let now = jot_core::usage::now_secs();
         let boosts: Vec<i64> = entries.iter().map(|e| usage.boost(&e.id(), now)).collect();
 
@@ -220,14 +227,14 @@ impl Ui {
         let mut state = ListState::default();
 
         loop {
-            // 过滤 + 排序
+            // Filter and rank
             let mut hits: Vec<(usize, i64)> = entries
                 .iter()
                 .enumerate()
                 .filter_map(|(i, _)| score(&matcher, &hays[i], &query).map(|s| (i, s + boosts[i])))
                 .collect();
-            // 总是排序：搜索词为空时这就退化成「按常用度排」，
-            // 分数相同的靠 sort_by_key 的稳定性保持原有文件顺序
+            // Always sort: with an empty query this degrades to "most used first",
+            // and equal scores keep file order thanks to sort_by_key being stable
             hits.sort_by_key(|h| std::cmp::Reverse(h.1));
             if cursor >= hits.len() {
                 cursor = hits.len().saturating_sub(1);
@@ -287,7 +294,7 @@ impl Ui {
         }
     }
 
-    /// 变量取值：带候选列表时可筛选，也允许直接输入自定义值。
+    /// Ask for a variable: filterable when there are candidates, and a typed value is always allowed.
     pub fn ask_choice(
         &mut self,
         context: &str,
@@ -305,7 +312,7 @@ impl Ui {
                 .iter()
                 .filter(|c| input.is_empty() || matcher.fuzzy_match(&c.display, &input).is_some())
                 .collect();
-            // 输入的内容不在候选里时，允许直接用它
+            // If what was typed is not among the candidates, offer it as-is
             let custom = !input.is_empty() && !options.iter().any(|c| c.value == input);
             let total = hits.len() + usize::from(custom);
             if cursor >= total {
@@ -334,7 +341,7 @@ impl Ui {
                         Block::default()
                             .borders(Borders::ALL)
                             .border_style(Style::default().fg(DIM))
-                            .title(Span::styled(" 命令 ", Style::default().fg(DIM))),
+                            .title(Span::styled(t!(" 命令 ", " command "), Style::default().fg(DIM))),
                     ),
                     chunks[0],
                 );
@@ -360,7 +367,7 @@ impl Ui {
                 let mut items: Vec<ListItem> = Vec::new();
                 if custom {
                     items.push(ListItem::new(Line::from(vec![
-                        Span::styled("使用输入的值  ", Style::default().fg(WARN)),
+                        Span::styled(t!("使用输入的值  ", "use what you typed  "), Style::default().fg(WARN)),
                         Span::raw(input.clone()),
                     ])));
                 }
@@ -380,7 +387,7 @@ impl Ui {
 
                 f.render_widget(
                     Paragraph::new(Span::styled(
-                        "输入筛选或直接键入值   ↑↓ 选择   ⏎ 确定   esc 取消",
+                        t!("输入筛选或直接键入值   ↑↓ 选择   ⏎ 确定   esc 取消", "type to filter or enter a value   up/down move   enter confirm   esc cancel"),
                         Style::default().fg(DIM),
                     ))
                     .block(
@@ -437,7 +444,7 @@ impl Ui {
         }
     }
 
-    /// 自由输入。
+    /// Free text entry.
     pub fn ask_text(
         &mut self,
         context: &str,
@@ -467,7 +474,10 @@ impl Ui {
                         Block::default()
                             .borders(Borders::ALL)
                             .border_style(Style::default().fg(DIM))
-                            .title(Span::styled(" 命令 ", Style::default().fg(DIM))),
+                            .title(Span::styled(
+                                t!(" 命令 ", " command "),
+                                Style::default().fg(DIM),
+                            )),
                     ),
                     chunks[0],
                 );
@@ -489,12 +499,15 @@ impl Ui {
                     chunks[1],
                 );
                 f.render_widget(
-                    Paragraph::new(Span::styled("⏎ 确定   esc 取消", Style::default().fg(DIM)))
-                        .block(
-                            Block::default()
-                                .borders(Borders::TOP)
-                                .border_style(Style::default().fg(DIM)),
-                        ),
+                    Paragraph::new(Span::styled(
+                        t!("⏎ 确定   esc 取消", "enter confirm   esc cancel"),
+                        Style::default().fg(DIM),
+                    ))
+                    .block(
+                        Block::default()
+                            .borders(Borders::TOP)
+                            .border_style(Style::default().fg(DIM)),
+                    ),
                     chunks[3],
                 );
             })?;
@@ -520,7 +533,7 @@ impl Ui {
         }
     }
 
-    /// 危险命令的二次确认。
+    /// Second confirmation for a dangerous command.
     pub fn confirm(&mut self, command: &str) -> Result<bool> {
         loop {
             self.term.draw(|f| {
@@ -536,7 +549,7 @@ impl Ui {
 
                 f.render_widget(
                     Paragraph::new(Span::styled(
-                        " 这条命令被标记为危险",
+                        t!(" 这条命令被标记为危险", " This command is marked dangerous"),
                         Style::default().fg(WARN).add_modifier(Modifier::BOLD),
                     ))
                     .block(
@@ -558,7 +571,10 @@ impl Ui {
                 );
                 f.render_widget(
                     Paragraph::new(Span::styled(
-                        "y 确认放到命令行上   n / esc 取消   （jot 不会替你执行）",
+                        t!(
+                            "y 确认放到命令行上   n / esc 取消   （jot 不会替你执行）",
+                            "y put it on the prompt   n / esc cancel   (jot never runs it for you)"
+                        ),
                         Style::default().fg(DIM),
                     )),
                     chunks[2],
@@ -582,7 +598,7 @@ impl Ui {
         }
     }
 
-    /// 多选（历史导入用）。
+    /// Multi-select, used by history import.
     pub fn multi_select(&mut self, title: &str, rows: &[String]) -> Result<Option<Vec<usize>>> {
         let mut checked = vec![false; rows.len()];
         let mut cursor = 0usize;
@@ -640,7 +656,10 @@ impl Ui {
 
                 f.render_widget(
                     Paragraph::new(Span::styled(
-                        "space 勾选   a 全选   ⏎ 导入所选   esc 取消",
+                        t!(
+                            "space 勾选   a 全选   ⏎ 导入所选   esc 取消",
+                            "space toggle   a select all   enter import   esc cancel"
+                        ),
                         Style::default().fg(DIM),
                     ))
                     .block(
@@ -707,20 +726,20 @@ mod tests {
     use std::path::Path;
 
     const SRC: &str = "---\nname: demo\n---\n\n\
-## 重启后端服务\n\n\
-改完配置必须重启。\n\n\
+## Restart the backend service\n\n\
+Required after every config change.\n\n\
 ```sh @confirm\nsudo systemctl restart {{service}}\n```\n\n\
-## 查看日志\n\n\
+## View the logs\n\n\
 ```sh\njournalctl -f\n```\n";
 
     fn entries() -> Vec<notebook::Entry> {
         notebook::parse(Path::new("demo.md"), SRC).unwrap().entries
     }
 
-    /// 把渲染出来的缓冲区导成纯文本，方便断言。
+    /// Dump the rendered buffer as plain text so it can be asserted on.
     ///
-    /// CJK 是双宽字符，ratatui 用两个单元格存一个字 —— 必须按显示宽度推进，
-    /// 否则导出来是「重 启 后 端」这种带空格的东西。
+    /// CJK characters are double width and ratatui stores one per two cells, so
+    /// this must advance by display width or the dump comes out spaced apart.
     fn render(w: u16, h: u16, query: &str, n_hits: usize, selected: Option<usize>) -> String {
         render_entries(&entries(), w, h, query, n_hits, selected)
     }
@@ -758,50 +777,69 @@ mod tests {
         out
     }
 
-    /// 回归：截断曾经按字符数算，中文标题因此从不触发省略号，
-    /// 而是被终端直接切掉，行尾的笔记本名和 ⚠ 一起消失。
+    /// Regression: truncation used to count characters, so Chinese titles never
+    /// triggered the ellipsis and were clipped by the terminal instead.
     #[test]
     fn clamp_measures_columns_not_characters() {
         use unicode_width::UnicodeWidthStr;
 
-        let cjk = "重启后端服务的那条命令"; // 11 字 = 22 列
+        // Deliberately Chinese: this is exactly the case being tested.
+        // 11 double-width characters occupy 22 terminal columns.
+        let cjk = "重启后端服务的那条命令";
+        assert_eq!(cjk.chars().count(), 11);
         assert_eq!(cjk.width(), 22);
-        assert_eq!(clamp_line(cjk, 30), cjk, "够宽的时候不该截断");
+        assert_eq!(
+            clamp_line(cjk, 30),
+            cjk,
+            "should not truncate when there is room"
+        );
 
         let cut = clamp_line(cjk, 10);
-        assert!(cut.ends_with('…'), "没有省略号: {cut}");
+        assert!(cut.ends_with('…'), "no ellipsis: {cut}");
         assert!(
             cut.width() <= 10,
-            "截断后仍然占了 {} 列: {cut}",
+            "still {} columns after truncation: {cut}",
             cut.width()
         );
 
-        // 纯 ASCII 的行为不变
+        // Pure ASCII behaviour is unchanged
         assert_eq!(clamp_line("abcdefghij", 5), "abcd…");
         assert_eq!(clamp_line("abc", 5), "abc");
     }
 
     #[test]
     fn draws_query_titles_and_counts() {
-        let s = render(80, 24, "重启", 2, Some(0));
-        assert!(s.contains("重启"), "搜索词没画出来:\n{s}");
-        assert!(s.contains("重启后端服务"), "条目标题没画出来:\n{s}");
-        assert!(s.contains("2/2"), "计数不对:\n{s}");
-        assert!(s.contains("demo"), "笔记本名没画出来:\n{s}");
+        let s = render(80, 24, "Restart", 2, Some(0));
+        assert!(s.contains("Restart"), "query not drawn:\n{s}");
+        assert!(
+            s.contains("Restart the backend service"),
+            "entry title not drawn:\n{s}"
+        );
+        assert!(s.contains("2/2"), "count is wrong:\n{s}");
+        assert!(s.contains("demo"), "notebook name not drawn:\n{s}");
     }
 
     #[test]
     fn variables_render_as_readable_placeholders() {
         let s = render(80, 24, "", 2, Some(0));
-        assert!(s.contains("⟨service⟩"), "变量没换成可读占位符:\n{s}");
-        assert!(!s.contains("{{service}}"), "列表里直接显示了花括号:\n{s}");
+        assert!(
+            s.contains("⟨service⟩"),
+            "variables not rendered as readable placeholders:\n{s}"
+        );
+        assert!(
+            !s.contains("{{service}}"),
+            "raw braces shown in the list:\n{s}"
+        );
     }
 
     #[test]
     fn dangerous_entries_are_marked() {
         let s = render(80, 24, "", 2, Some(0));
-        assert!(s.contains('⚠'), "危险命令没有标记:\n{s}");
-        assert!(s.contains("危险命令"), "详情区没有提示:\n{s}");
+        assert!(s.contains('⚠'), "dangerous command not marked:\n{s}");
+        assert!(
+            s.contains("Dangerous command"),
+            "no hint in the detail area:\n{s}"
+        );
     }
 
     #[test]
@@ -811,11 +849,14 @@ mod tests {
         let line = second
             .lines()
             .find(|l| l.contains('❯'))
-            .expect("没有选中标记");
-        assert!(line.contains("查看日志"), "选中标记停在了错误的行: {line}");
+            .expect("no selection marker");
+        assert!(
+            line.contains("View the logs"),
+            "selection marker is on the wrong row: {line}"
+        );
     }
 
-    /// 窄终端和极端尺寸是 TUI 最常见的 panic 来源。
+    /// Narrow and extreme terminal sizes are the classic source of TUI panics.
     #[test]
     fn extreme_terminal_sizes_do_not_panic() {
         for (w, h) in [
@@ -829,41 +870,44 @@ mod tests {
             (4, 3),
             (1, 1),
         ] {
-            let _ = render(w, h, "重启", 2, Some(0));
+            let _ = render(w, h, "Restart", 2, Some(0));
             let _ = render(w, h, "", 2, None);
         }
     }
 
     #[test]
     fn empty_result_set_does_not_panic() {
-        let s = render(80, 24, "没有任何东西能匹配这一串", 0, None);
-        assert!(s.contains("0/2"), "空结果的计数不对:\n{s}");
+        let s = render(80, 24, "nothing can possibly match this string", 0, None);
+        assert!(
+            s.contains("0/2"),
+            "count is wrong for an empty result set:\n{s}"
+        );
     }
 
     #[test]
     fn long_content_is_truncated_with_an_ellipsis() {
-        // 窄终端下超长的标题和命令必须被截断，而不是把布局撑破
+        // At 40 columns a long title and command must be truncated, not break the layout
         let src = "---
 name: demo
 ---
 
-## 一个特别特别特别特别特别特别特别特别长的标题用来验证截断
+## An extremely extremely extremely extremely long title used to verify truncation
 
 ```sh
-echo 这是一条同样特别特别特别特别特别特别长的命令内容 {{var}}
+echo an equally extremely extremely extremely long command body {{var}}
 ```
 ";
         let owned = notebook::parse(Path::new("demo.md"), src).unwrap().entries;
         let s = render_entries(&owned, 40, 20, "", 1, Some(0));
         assert!(
             s.contains('…'),
-            "窄终端下内容没有被截断:
+            "content was not truncated on a narrow terminal:
 {s}"
         );
         assert_eq!(
             s.lines().count(),
             20,
-            "渲染出来的行数和终端高度对不上:
+            "rendered row count does not match the terminal height:
 {s}"
         );
     }

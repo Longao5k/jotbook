@@ -35,6 +35,7 @@ That's a **retrieval** problem, not a generation problem. And `sudo systemctl re
 
 ## Features
 
+- **Bilingual** — interface and built-in notebooks in English or Chinese, switched together with `jot lang`
 - **Not empty on day one** — 19 notebooks, 630+ commands built in:
   git · linux · macos · powershell · ssh · tmux · docker · kubectl · nginx · systemd · dotnet · flutter · npm · python · mssql · mysql · postgres · redis
 - **Learns what you use** — frequently and recently used entries float to the top. With an empty search box the list is simply your most-used commands
@@ -115,6 +116,7 @@ jot                                                      # go
 | `jot sync [name]` | Update sources |
 | `jot trust <name>` | Let a source's `from: shell` variables actually run |
 | `jot remove <name>` | Uninstall a source |
+| `jot lang [en\|zh\|auto]` | Show or set the interface and notebook language |
 | `jot doctor` | Self-check |
 | `jot path` | Print the data directory |
 | `jot pick -q "<term>" --first` | No UI, best match straight to stdout (for scripts) |
@@ -193,12 +195,31 @@ jot trust someone-jot-notebooks
 
 Everything else about an untrusted source works normally. And the command itself is still only ever *typed onto your prompt*, never executed.
 
+## Language
+
+jot speaks English and Chinese. Both the interface and the built-in notebooks
+switch together, so the entry titles and descriptions are in whichever language
+you read.
+
+```bash
+jot lang zh
+```
+
+The choice resolves in this order: an explicit `jot lang` setting, then
+`JOT_LANG` or your usual locale variables, then the OS locale, then English.
+`jot lang auto` hands control back to the environment.
+
+The commands themselves are identical in both languages, and a test enforces
+that: only the prose differs. Notebooks live under `notebooks/en/` and
+`notebooks/zh/` in this repository, and only the active language is written to
+`~/.jot/notebooks/builtin/`.
+
 ## Where things live
 
 ```
 ~/.jot/
 ├── notebooks/
-│   ├── builtin/     shipped with the binary; rewritten on upgrade
+│   ├── builtin/     shipped with the binary, in your language; rewritten on upgrade
 │   ├── local/       yours; never touched
 │   └── sources/     community sources (git clones); untrusted by default
 ├── config.toml      active profile
@@ -210,7 +231,7 @@ Everything else about an untrusted source works normally. And the command itself
 
 ## Contributing
 
-Notebooks are the most valuable thing you can send. A PR adding commands to `notebooks/*.md` needs no Rust at all — just Markdown that follows the format above. Commands that people genuinely can't remember are worth more than exhaustive coverage of `--help`.
+Notebooks are the most valuable thing you can send. A PR adding commands to `notebooks/en/*.md` needs no Rust at all — just Markdown that follows the format above. Add the matching entry to `notebooks/zh/*.md` if you can; a test checks that both languages stay structurally identical. Commands that people genuinely can't remember are worth more than exhaustive coverage of `--help`.
 
 For the client itself, see [docs/design.html](docs/design.html) for architecture, decision records, and non-goals before opening a large PR.
 

@@ -1,31 +1,32 @@
-//! 变量求值：内置变量、Profile 取值、跑命令生成候选列表。
+//! Resolving variables: built-ins, profile values, and shell-generated candidates.
 //!
-//! 求值顺序（见设计文档 D-03）：
-//!   1. `@` 开头 → 内置变量，直接算出来，不打断用户
-//!   2. `from: profile` 且当前 Profile 有这个键 → 直接用，不打断用户
-//!   3. 有 `cmd` → 跑命令拿候选列表，让用户选
-//!   4. 有 `options` → 固定候选，让用户选
-//!   5. 其他 → 自由输入
+//! Order (design doc D-03):
+//!   1. leading `@` -> a built-in, computed without interrupting the user
+//!   2. `from: profile` with a value in the active profile -> used directly
+//!   3. a `cmd` -> run it for a candidate list to choose from
+//!   4. `options` -> a fixed candidate list
+//!   5. otherwise -> free text
 //!
-//! 任何一步失败都降级到下一步，绝不让工具卡死或报错退出。
+//! Every step degrades into the next; nothing here may hang or abort the tool.
 
 use crate::config::Profiles;
 use crate::notebook::VarDecl;
+use crate::t;
 use std::process::Command;
 use std::time::Duration;
 
-/// 一个变量该怎么问用户。
+/// How a variable should be asked for.
 #[derive(Debug, Clone)]
 pub enum Ask {
-    /// 已经有值了，不用问
+    /// Already has a value, nothing to ask
     Resolved(String),
-    /// 从候选列表里选，也允许自由输入
+    /// Pick from a list, with a typed value also allowed
     Choose {
         label: String,
         options: Vec<Choice>,
         default: Option<String>,
     },
-    /// 纯自由输入
+    /// Free text only
     Text {
         label: String,
         default: Option<String>,
@@ -34,13 +35,13 @@ pub enum Ask {
 
 #[derive(Debug, Clone)]
 pub struct Choice {
-    /// 真正代入命令的值
+    /// The value substituted into the command
     pub value: String,
-    /// 列表里显示的完整行（可能带状态等附加信息）
+    /// The full line shown in the list, which may carry extra detail
     pub display: String,
 }
 
-/// 跑命令拿候选列表。失败返回空，调用方会自动降级为自由输入。
+/// Run a command for candidates. Empty on failure, and the caller degrades to free text.
 pub fn shell_candidates(cmd: &str) -> Vec<Choice> {
     let out = run_capture(cmd, Duration::from_secs(5));
     let Some(text) = out else { return Vec::new() };
@@ -50,7 +51,7 @@ pub fn shell_candidates(cmd: &str) -> Vec<Choice> {
         if line.is_empty() {
             continue;
         }
-        // 第一个字段是值，整行用来显示（docker ps --format "{{.Names}}\t{{.Status}}"）
+        // The first field is the value, the whole line is what gets displayed
         let value = line.split('\t').next().unwrap_or(line).trim().to_string();
         if value.is_empty() {
             continue;
@@ -79,13 +80,13 @@ fn run_capture(cmd: &str, _timeout: Duration) -> Option<String> {
     };
     match output {
         Ok(o) if o.status.success() => Some(String::from_utf8_lossy(&o.stdout).into_owned()),
-        // 命令存在但返回非零（比如不在 git 仓库里）也可能有有用输出
+        // A non-zero exit (say, not inside a git repo) can still carry useful output
         Ok(o) if !o.stdout.is_empty() => Some(String::from_utf8_lossy(&o.stdout).into_owned()),
         _ => None,
     }
 }
 
-/// 内置变量。算不出来就返回 None，退回自由输入。
+/// Built-in variables. None when it cannot be computed, which falls back to free text.
 pub fn builtin(name: &str) -> Option<String> {
     let key = name.trim_start_matches('@');
     match key {
@@ -108,7 +109,7 @@ pub fn builtin(name: &str) -> Option<String> {
 }
 
 fn today() -> String {
-    // 不引入 chrono：从 UNIX 时间戳自己换算日期
+    // No chrono dependency: derive the date from the UNIX timestamp
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -118,7 +119,7 @@ fn today() -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-/// Howard Hinnant 的 civil_from_days 算法。
+/// Howard Hinnant's civil_from_days algorithm.
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -132,7 +133,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-/// 决定一个变量该怎么问。
+/// Decide how a variable should be asked for.
 pub fn plan(
     name: &str,
     inline_default: Option<&str>,
@@ -146,7 +147,13 @@ pub fn plan(
             return Ask::Resolved(v);
         }
         return Ask::Text {
-            label: format!("{name}（内置变量取值失败，请手填）"),
+            label: format!(
+                "{}",
+                t!(
+                    "{name}（内置变量取值失败，请手填）",
+                    "{name} (built-in lookup failed, enter it manually)"
+                )
+            ),
             default: inline_default.map(String::from),
         };
     }
@@ -156,15 +163,15 @@ pub fn plan(
         None => name.to_string(),
     };
 
-    // 没有声明的变量也要查 Profile。`jot save` 的反向参数化生成的 `{{service}}`
-    // 并不会附带 vars: 声明 —— 不查的话，它生成的笔记本反而用不了推导它时
-    // 依据的那个 Profile 值。显式写了 from: ask / from: shell 的除外，那是明确意图。
+    // Undeclared variables consult the profile too. The `{{service}}` produced by
+    // `jot save`'s reverse parameterization carries no vars: declaration, so
+    // without this the entry it generates cannot use the value it came from.
     let consult_profile = decl.map(|d| d.source() == "profile").unwrap_or(true);
     if consult_profile {
         if let Some(v) = profiles.get(profile_name, name) {
             return Ask::Resolved(v.to_string());
         }
-        // Profile 里没配，继续往下降级
+        // Not in the profile, so carry on down
     }
 
     if let Some(d) = decl {
@@ -214,7 +221,7 @@ mod tests {
         assert_eq!(d.len(), 10);
         assert_eq!(&d[4..5], "-");
         let year: i64 = d[..4].parse().unwrap();
-        assert!((2024..2100).contains(&year), "算出来的年份不对: {d}");
+        assert!((2024..2100).contains(&year), "computed year is wrong: {d}");
     }
 
     #[test]
@@ -232,7 +239,7 @@ mod tests {
         };
         match plan("service", None, Some(&decl), &p, "prod", false) {
             Ask::Resolved(v) => assert_eq!(v, "api.service"),
-            other => panic!("应该直接解析出来，得到 {other:?}"),
+            other => panic!("should have resolved outright, got {other:?}"),
         }
     }
 
@@ -246,7 +253,7 @@ mod tests {
         };
         match plan("x", None, Some(&decl), &p, "default", false) {
             Ask::Choose { options, .. } => assert_eq!(options.len(), 2),
-            other => panic!("应该降级到候选列表，得到 {other:?}"),
+            other => panic!("should have fallen back to a candidate list, got {other:?}"),
         }
     }
 
@@ -255,23 +262,23 @@ mod tests {
         let p = Profiles::default();
         match plan("whatever", Some("8000"), None, &p, "default", false) {
             Ask::Text { default, .. } => assert_eq!(default.as_deref(), Some("8000")),
-            other => panic!("应该是自由输入，得到 {other:?}"),
+            other => panic!("should have been free text, got {other:?}"),
         }
     }
 
-    /// `jot save` 的反向参数化不会写 vars: 声明，所以未声明的变量必须查 Profile，
-    /// 否则它生成的笔记本用不了推导它时依据的那个值。
+    /// `jot save`'s reverse parameterization writes no vars: declaration, so an
+    /// undeclared variable must consult the profile or its output is unusable.
     #[test]
     fn undeclared_var_still_consults_profile() {
         let mut p = Profiles::default();
         p.set("default", "service", "my-api.service");
         match plan("service", None, None, &p, "default", false) {
             Ask::Resolved(v) => assert_eq!(v, "my-api.service"),
-            other => panic!("未声明的变量没有查 Profile，得到 {other:?}"),
+            other => panic!("an undeclared variable did not consult the profile, got {other:?}"),
         }
     }
 
-    /// 显式写了 from: ask 就是明确要问，Profile 不该抢答。
+    /// An explicit from: ask means ask, and the profile must not pre-empt it.
     #[test]
     fn explicit_ask_beats_profile() {
         let mut p = Profiles::default();
@@ -285,7 +292,7 @@ mod tests {
                 plan("service", None, Some(&decl), &p, "default", false),
                 Ask::Text { .. }
             ),
-            "from: ask 被 Profile 抢答了"
+            "the profile pre-empted an explicit from: ask"
         );
     }
 

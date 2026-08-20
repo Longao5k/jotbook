@@ -1,7 +1,8 @@
-//! D-09 的安全属性：外部源的 `from: shell` 是任意代码执行，默认必须禁用。
+//! The D-09 security property: a source's `from: shell` is arbitrary code
 //!
-//! 这条比任何功能都重要 —— 产品叙事是「jot 从不执行任何东西」，
-//! 如果装一个社区笔记本就能让它跑命令，那句话就是假的。
+//! execution, so it must be disabled by default. This matters more than any
+//! feature: the product claim is that jot never executes anything, and a
+//! community notebook being able to run commands would make that false.
 
 use jot_core::{Config, Library, Paths};
 use std::path::{Path, PathBuf};
@@ -14,7 +15,7 @@ vars:\n\
 \x20   cmd: echo pwned\n\
 ---\n\
 \n\
-## 一条带动态变量的命令\n\
+## A command with a dynamic variable\n\
 \n\
 ```sh\n\
 echo {{target}}\n\
@@ -40,7 +41,7 @@ fn risky_entry(lib: &Library) -> jot_core::Entry {
     lib.entries()
         .into_iter()
         .find(|e| e.notebook == "risky")
-        .expect("外部源的笔记本没被加载")
+        .expect("the external source's notebook was not loaded")
         .clone()
 }
 
@@ -50,7 +51,7 @@ fn external_sources_are_untrusted_by_default() {
     let lib = load(&root);
     assert!(
         !risky_entry(&lib).trusted,
-        "外部源的条目默认就是可信的 —— from: shell 会被执行"
+        "external entries are trusted by default, so from: shell would run"
     );
 }
 
@@ -66,9 +67,12 @@ fn builtin_and_local_notebooks_stay_trusted() {
         .entries()
         .into_iter()
         .find(|e| e.notebook == "mine")
-        .expect("本地笔记本没被加载")
+        .expect("the local notebook was not loaded")
         .clone();
-    assert!(mine.trusted, "自己写的笔记本不该被降级为不可信");
+    assert!(
+        mine.trusted,
+        "a notebook you wrote yourself must not be downgraded to untrusted"
+    );
 }
 
 #[test]
@@ -82,7 +86,7 @@ fn explicit_trust_promotes_the_source() {
 
     assert!(
         risky_entry(&load(&root)).trusted,
-        "显式授信之后条目仍然不可信"
+        "the entry is still untrusted after being trusted explicitly"
     );
 }
 
@@ -92,12 +96,12 @@ fn trusting_a_different_source_does_not_leak() {
     let paths = Paths { root: root.clone() };
 
     let mut cfg = Config::load(&paths);
-    cfg.trusted_sources = vec!["某个别的源".to_string()];
+    cfg.trusted_sources = vec!["some other source".to_string()];
     cfg.save(&paths).unwrap();
 
     assert!(
         !risky_entry(&load(&root)).trusted,
-        "授信了 A 源却把 B 源也放行了"
+        "trusting source A also let source B through"
     );
 }
 
@@ -105,16 +109,16 @@ fn trusting_a_different_source_does_not_leak() {
 fn boilerplate_files_are_not_loaded_as_notebooks() {
     let root = setup("boilerplate");
     let src = root.join("notebooks").join("sources").join("community");
-    // 一份带 ## 标题和代码块的 README —— 结构上完全能解析成笔记本
+    // A README with a heading and a code block, which parses fine structurally
     std::fs::write(
         src.join("README.md"),
-        "---\nname: readme\n---\n\n## 安装\n\n```sh\ncargo install x\n```\n",
+        "---\nname: readme\n---\n\n## Install\n\n```sh\ncargo install x\n```\n",
     )
     .unwrap();
 
     let lib = load(&root);
     assert!(
         !lib.notebooks.iter().any(|n| n.name == "readme"),
-        "仓库的 README 被当成笔记本收进来了"
+        "the repository README was picked up as a notebook"
     );
 }

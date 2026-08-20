@@ -1,7 +1,8 @@
-//! `jot init <shell>` 输出的集成脚本。
+//! The integration script printed by `jot init <shell>`.
 //!
-//! 用户的 profile 里永远只有一行 `jot init ... | eval`，脚本本体随二进制升级，
-//! 不用改配置（zoxide / starship 同款做法）。
+//! The user's profile only ever holds one `jot init ... | eval` line; the
+//! script itself ships with the binary, so upgrades need no config edits.
+//! Same approach as zoxide and starship.
 
 pub fn script(shell: &str, key: Option<&str>) -> Option<String> {
     Some(match shell {

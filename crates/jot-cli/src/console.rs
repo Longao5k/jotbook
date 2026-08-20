@@ -1,10 +1,11 @@
-//! Windows 控制台代码页。
+//! Windows console code page.
 //!
-//! 内置笔记本的标题和说明全是中文。Windows Terminal 默认就是 UTF-8，但老的
-//! conhost 上代码页常常是 936(GBK)，那样界面会整片乱码。这里在启动时切到
-//! UTF-8，退出时还原 —— 不还原的话会影响用户在同一个窗口里跑的其它程序。
+//! Windows Terminal is UTF-8 already, but legacy conhost often runs a
+//! regional code page such as 936 (GBK), where non-ASCII output turns to
+//! mojibake. Switch to UTF-8 on start and restore it on exit; not restoring
+//! would affect other programs run in the same window afterwards.
 
-/// 进入 UTF-8 控制台；Drop 时还原原来的代码页。
+/// Enter a UTF-8 console; the previous code page is restored on Drop.
 pub struct Utf8Console {
     #[cfg(windows)]
     previous_output: u32,

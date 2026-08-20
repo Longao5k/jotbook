@@ -293,8 +293,8 @@ figcaption{
     <span><b>日期</b> 2026-08-19</span>
     <span><b>栈</b> Rust 1.97 · MSVC</span>
     <span><b>后端</b> 无</span>
-    <span><b>内置</b> 19 本 · 632 条</span>
-    <span><b>测试</b> 94</span>
+    <span><b>内置</b> 19 本 × 中英 · 632 条</span>
+    <span><b>测试</b> 102</span>
     <span><b>冷启动</b> 38ms</span>
   </div>
 </header>
@@ -759,6 +759,17 @@ zle -N __jot_widget; bindkey <span class="s">'^G'</span> __jot_widget</pre>
       <dl>
         <dt>理由</dt><dd class="now">CLI 要单文件无运行时依赖，GUI 要能复用同一个 core —— 这个组合是唯一解。navi / espanso / atuin 全是 Rust，注入层的坑可以直接抄。Tauri 产物 ~8MB，Electron ~100MB。</dd>
         <dt>代价</dt><dd>Tauri 的 WebView 在旧 Windows 上偶有差异；Svelte 生态比 React 小。</dd>
+      </dl>
+    </div>
+
+    <div class="dr">
+      <div class="dr-top"><span class="dr-id">D-13</span><span class="chip md">i18n</span></div>
+      <h5>面向用户的一切双语，注释只用英文</h5>
+      <dl>
+        <dt>理由</dt><dd class="now">界面和<b>内置笔记本一起</b>切换 —— 只翻界面而条目标题还是中文，等于没翻。注释是给贡献者看的，维护两份没有收益。</dd>
+        <dt>落地</dt><dd class="now"><code>t!(中文, English)</code> 宏把两个版本放在同一处，这是它们唯一能保持同步的方式。笔记本分 <code>notebooks/en/</code> 与 <code>notebooks/zh/</code>，只落地当前语言那一套。有测试强制两种语言结构完全一致：条目数、<code>@platform</code>、<code>@confirm</code>、以及<b>命令本身逐字节相同</b>。</dd>
+        <dt>踩到的坑</dt><dd class="now">使用统计原本按 <code>笔记本/标题</code> 记，而标题是会被翻译的 —— 切一次语言就把 frecency 数据全作废。改成按<b>命令的哈希</b>记，顺带也解决了「贡献者改个措辞就清空统计」。</dd>
+        <dt>代价</dt><dd>加一条命令要写两份文案；笔记本的命令文本在两个目录里重复。</dd>
       </dl>
     </div>
 

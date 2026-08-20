@@ -1,26 +1,34 @@
-//! CLI 层的集成测试：真的把二进制跑起来，用隔离的 JOT_HOME。
+//! CLI-level integration tests: run the real binary against an isolated
+//! JOT_HOME. Unit tests cannot tell you whether the thing works once
+//! installed; this layer can.
 //!
-//! 单元测试覆盖不到「装好之后到底能不能用」，这一层补上。
+//! JOT_LANG is pinned so the assertions do not depend on the machine locale.
+//! One test deliberately runs in Chinese to cover the switch itself.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-/// 每个测试一个独立的数据目录 —— 测试是并行跑的。
+/// One data directory per test, because tests run in parallel.
 fn temp_home(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("jot-it-{}-{}", tag, std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("建不了临时目录");
+    std::fs::create_dir_all(&dir).expect("could not create the temp directory");
     dir
 }
 
 fn jot(home: &PathBuf, args: &[&str]) -> Output {
+    jot_in("en", home, args)
+}
+
+fn jot_in(lang: &str, home: &PathBuf, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_jot"))
         .env("JOT_HOME", home)
-        // 编辑器相关的子命令不该在测试里弹窗
+        .env("JOT_LANG", lang)
+        // Editor-opening subcommands must not pop a window during tests
         .env("EDITOR", "")
         .args(args)
         .output()
-        .expect("跑不起来 jot")
+        .expect("could not run jot")
 }
 
 fn stdout(o: &Output) -> String {
@@ -35,7 +43,7 @@ fn version_works() {
     let home = temp_home("version");
     let o = jot(&home, &["--version"]);
     assert!(o.status.success());
-    assert!(stdout(&o).contains("jot"), "得到 {:?}", stdout(&o));
+    assert!(stdout(&o).contains("jot"), "got {:?}", stdout(&o));
 }
 
 #[test]
@@ -45,15 +53,18 @@ fn first_run_seeds_builtin_notebooks() {
     assert!(o.status.success(), "{}", stderr(&o));
 
     let builtin = home.join("notebooks").join("builtin");
-    assert!(builtin.join("git.md").is_file(), "内置笔记本没落地");
+    assert!(
+        builtin.join("git.md").is_file(),
+        "the built-in notebooks were not written"
+    );
     assert!(builtin.join("docker.md").is_file());
 
     let out = stdout(&o);
-    assert!(out.contains("笔记本"), "doctor 输出不对：{out}");
-    // 空目录起步也不该是空的
+    assert!(out.contains("notebooks"), "doctor output is wrong: {out}");
+    // Starting from an empty directory should still not be empty
     assert!(
-        !out.contains("条目            0 条"),
-        "首次运行条目数是 0：{out}"
+        !out.contains("entries         0 "),
+        "the first run reported zero entries: {out}"
     );
 }
 
@@ -63,14 +74,21 @@ fn ls_lists_entries() {
     let o = jot(&home, &["ls"]);
     assert!(o.status.success(), "{}", stderr(&o));
     let out = stdout(&o);
-    assert!(out.contains("# git"), "没有 git 笔记本：{out}");
-    assert!(out.len() > 2000, "输出太短，只有 {} 字节", out.len());
+    assert!(out.contains("# git"), "no git notebook: {out}");
+    assert!(
+        out.len() > 2000,
+        "output is only {} bytes, too short",
+        out.len()
+    );
 }
 
 #[test]
 fn first_resolves_a_command_without_variables() {
     let home = temp_home("first");
-    let o = jot(&home, &["pick", "-q", "撤销最后一次提交 保留", "--first"]);
+    let o = jot(
+        &home,
+        &["pick", "-q", "Undo the last commit but keep", "--first"],
+    );
     assert!(o.status.success(), "{}", stderr(&o));
     assert_eq!(stdout(&o).trim(), "git reset --soft HEAD~1");
 }
@@ -78,11 +96,19 @@ fn first_resolves_a_command_without_variables() {
 #[test]
 fn inline_default_is_applied() {
     let home = temp_home("default");
-    let o = jot(&home, &["pick", "-q", "静态文件服务器", "--first"]);
+    let o = jot(
+        &home,
+        &[
+            "pick",
+            "-q",
+            "Serve the current directory over HTTP",
+            "--first",
+        ],
+    );
     assert!(o.status.success(), "{}", stderr(&o));
     assert!(
         stdout(&o).trim().ends_with("8000"),
-        "行内默认值没生效：{}",
+        "the inline default did not apply: {}",
         stdout(&o)
     );
 }
@@ -90,28 +116,44 @@ fn inline_default_is_applied() {
 #[test]
 fn go_templates_survive_end_to_end() {
     let home = temp_home("gotpl");
-    let o = jot(&home, &["pick", "-q", "容器名和状态", "--first"]);
+    let o = jot(&home, &["pick", "-q", "just names and status", "--first"]);
     assert!(o.status.success(), "{}", stderr(&o));
     let out = stdout(&o);
     assert!(
         out.contains("{{.Names}}"),
-        "Go 模板被吃掉了或被替换了：{out}"
+        "the Go template was eaten or substituted: {out}"
     );
 }
 
 #[test]
 fn profile_value_feeds_a_variable() {
     let home = temp_home("profile");
-    // 没配 Profile 时应该失败，并说清楚缺什么
-    let miss = jot(&home, &["pick", "-q", "ssh 登录", "--first"]);
-    assert!(!miss.status.success(), "缺变量却成功了");
-    assert!(stderr(&miss).contains("host"), "没指出缺哪个变量");
+    // Own fixture rather than a built-in entry: fuzzy search over shipped
+    // titles is brittle, and this test is about profile resolution.
+    let dir = home.join("notebooks").join("local");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("probe.md"),
+        "---\nname: probe\n---\n\n## Zzprobe connect\n\n```sh\nssh {{host}}\n```\n",
+    )
+    .unwrap();
 
-    // 配上之后应该直接出结果
+    // Without the profile it must fail, and say what is missing
+    let miss = jot(&home, &["pick", "-q", "Zzprobe connect", "--first"]);
+    assert!(
+        !miss.status.success(),
+        "succeeded despite a missing variable"
+    );
+    assert!(
+        stderr(&miss).contains("host"),
+        "did not say which variable was missing"
+    );
+
+    // With it set, the result comes straight out
     assert!(jot(&home, &["profile", "set", "host", "prod-01"])
         .status
         .success());
-    let ok = jot(&home, &["pick", "-q", "ssh 登录", "--first"]);
+    let ok = jot(&home, &["pick", "-q", "Zzprobe connect", "--first"]);
     assert!(ok.status.success(), "{}", stderr(&ok));
     assert_eq!(stdout(&ok).trim(), "ssh prod-01");
 }
@@ -119,15 +161,25 @@ fn profile_value_feeds_a_variable() {
 #[test]
 fn profiles_are_isolated_from_each_other() {
     let home = temp_home("profiles");
+    // Own fixture rather than a built-in entry: fuzzy search over shipped
+    // titles is brittle, and this test is about profile resolution.
+    let dir = home.join("notebooks").join("local");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("probe.md"),
+        "---\nname: probe\n---\n\n## Zzprobe connect\n\n```sh\nssh {{host}}\n```\n",
+    )
+    .unwrap();
+
     jot(&home, &["profile", "set", "host", "dev-box"]);
     jot(&home, &["use", "prod"]);
     jot(&home, &["profile", "set", "host", "prod-box"]);
 
-    let o = jot(&home, &["pick", "-q", "ssh 登录", "--first"]);
+    let o = jot(&home, &["pick", "-q", "Zzprobe connect", "--first"]);
     assert_eq!(stdout(&o).trim(), "ssh prod-box");
 
     jot(&home, &["use", "default"]);
-    let o = jot(&home, &["pick", "-q", "ssh 登录", "--first"]);
+    let o = jot(&home, &["pick", "-q", "Zzprobe connect", "--first"]);
     assert_eq!(stdout(&o).trim(), "ssh dev-box");
 }
 
@@ -138,15 +190,18 @@ fn platform_filtering_hides_other_platforms() {
     let powershell = stdout(&jot(&home, &["ls", "--notebook", "powershell"]));
 
     if cfg!(target_os = "windows") {
-        assert!(systemd.trim().is_empty(), "Windows 上不该看到 systemd 条目");
+        assert!(
+            systemd.trim().is_empty(),
+            "systemd entries must not show on Windows"
+        );
         assert!(
             powershell.contains("#"),
-            "Windows 上应该看到 powershell 条目"
+            "powershell entries should show on Windows"
         );
     } else {
         assert!(
             powershell.trim().is_empty(),
-            "非 Windows 上不该看到 powershell 条目"
+            "powershell entries must not show off Windows"
         );
     }
 }
@@ -154,11 +209,14 @@ fn platform_filtering_hides_other_platforms() {
 #[test]
 fn confirm_entries_are_announced_in_first_mode() {
     let home = temp_home("confirm");
-    let o = jot(&home, &["pick", "-q", "彻底丢弃所有本地改动", "--first"]);
+    let o = jot(
+        &home,
+        &["pick", "-q", "Throw away every local change", "--first"],
+    );
     assert!(o.status.success(), "{}", stderr(&o));
     assert!(
-        stderr(&o).contains("危险"),
-        "危险命令没有在 --first 模式下出声：{}",
+        stderr(&o).contains("dangerous"),
+        "a dangerous command said nothing in --first mode: {}",
         stderr(&o)
     );
 }
@@ -166,30 +224,35 @@ fn confirm_entries_are_announced_in_first_mode() {
 #[test]
 fn new_notebook_is_created_and_indexed() {
     let home = temp_home("new");
-    // EDITOR 设为空 → open_editor 会走系统默认，测试里不希望弹窗，
-    // 所以只验证文件被创建（子命令本身即使打不开编辑器也应建好文件）
+    // EDITOR is empty, so open_editor falls back to the system default. We do
+    // not want a window, so only assert the file was created - the subcommand
+    // must write it even when no editor can be opened.
     let _ = jot(&home, &["new", "scratch"]);
     let path = home.join("notebooks").join("local").join("scratch.md");
-    assert!(path.is_file(), "新笔记本没建出来");
+    assert!(path.is_file(), "the new notebook was not created");
 
     let o = jot(&home, &["ls", "--notebook", "scratch"]);
-    assert!(stdout(&o).contains("scratch"), "新笔记本没被索引到");
+    assert!(
+        stdout(&o).contains("scratch"),
+        "the new notebook was not indexed"
+    );
 }
 
 #[test]
 fn save_appends_a_parseable_entry() {
     let home = temp_home("save");
     jot(&home, &["profile", "set", "service", "my-api.service"]);
-    // save 需要交互问标题，这里直接验证底层写入格式：先建笔记本再手写一条
+    // save prompts for a title, so write the entry directly and assert the
+    // format the resolver expects
     let dir = home.join("notebooks").join("local");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("mine.md"),
-        "---\nname: mine\n---\n\n## 重启我的服务\n\n```sh\nsudo systemctl restart {{service}}\n```\n",
+        "---\nname: mine\n---\n\n## Restart my service\n\n```sh\nsudo systemctl restart {{service}}\n```\n",
     )
     .unwrap();
 
-    let o = jot(&home, &["pick", "-q", "重启我的服务", "--first"]);
+    let o = jot(&home, &["pick", "-q", "Restart my service", "--first"]);
     assert!(o.status.success(), "{}", stderr(&o));
     assert_eq!(stdout(&o).trim(), "sudo systemctl restart my-api.service");
 }
@@ -198,8 +261,11 @@ fn save_appends_a_parseable_entry() {
 fn secrets_are_refused_by_save() {
     let home = temp_home("secret");
     let o = jot(&home, &["save", "export GITHUB_TOKEN=abc123"]);
-    assert!(!o.status.success(), "含密钥的命令被存下来了");
-    assert!(stderr(&o).contains("密钥"), "{}", stderr(&o));
+    assert!(
+        !o.status.success(),
+        "a command containing a secret was stored"
+    );
+    assert!(stderr(&o).contains("secret"), "{}", stderr(&o));
 }
 
 #[test]
@@ -213,21 +279,27 @@ fn init_emits_scripts_for_every_supported_shell() {
     ] {
         let o = jot(&home, &["init", shell]);
         assert!(o.status.success(), "{shell}: {}", stderr(&o));
-        assert!(stdout(&o).contains(needle), "{shell} 脚本内容不对");
+        assert!(
+            stdout(&o).contains(needle),
+            "the {shell} script content is wrong"
+        );
         assert!(
             stdout(&o).contains("--widget"),
-            "{shell} 脚本没有用 widget 协议"
+            "the {shell} script does not use the widget protocol"
         );
     }
     let bad = jot(&home, &["init", "nushell"]);
-    assert!(!bad.status.success(), "未知 shell 应该报错");
+    assert!(!bad.status.success(), "an unknown shell should be an error");
 }
 
 #[test]
 fn custom_key_is_honored() {
     let home = temp_home("key");
     let o = jot(&home, &["init", "bash", "--key", r"\C-o"]);
-    assert!(stdout(&o).contains(r"\C-o"), "自定义快捷键没生效");
+    assert!(
+        stdout(&o).contains(r"\C-o"),
+        "the custom key binding did not apply"
+    );
 }
 
 #[test]
@@ -237,7 +309,7 @@ fn tui_refuses_to_run_without_a_terminal() {
     assert!(!o.status.success());
     assert!(
         stderr(&o).contains("--first"),
-        "非 TTY 的报错没有指出可用的替代方案：{}",
+        "the non-TTY error does not point at an alternative: {}",
         stderr(&o)
     );
 }
@@ -245,9 +317,9 @@ fn tui_refuses_to_run_without_a_terminal() {
 #[test]
 fn unknown_first_arg_is_treated_as_a_query() {
     let home = temp_home("bareword");
-    // `jot docker 列出…` 应该等价于 `jot pick -q "docker 列出…"`，
-    // 且末尾的 `--first` 必须当成选项，不能被吞进搜索词
-    let o = jot(&home, &["docker", "列出运行中的容器", "--first"]);
+    // `jot docker List...` must behave like `jot pick -q "docker List..."`,
+    // and the trailing `--first` must stay an option rather than a search term
+    let o = jot(&home, &["docker", "List running containers", "--first"]);
     assert!(o.status.success(), "{}", stderr(&o));
     assert_eq!(stdout(&o).trim(), "docker ps");
 }
@@ -260,14 +332,17 @@ fn user_edits_to_builtin_notebooks_are_not_clobbered() {
     let original = std::fs::read_to_string(&git_md).unwrap();
     std::fs::write(
         &git_md,
-        format!("{original}\n## 我加的\n\n```sh\necho mine\n```\n"),
+        format!("{original}\n## mine\n\n```sh\necho mine\n```\n"),
     )
     .unwrap();
 
-    // 再跑一次，同版本不该重写
+    // Run again: the same version must not rewrite anything
     jot(&home, &["doctor"]);
     let after = std::fs::read_to_string(&git_md).unwrap();
-    assert!(after.contains("我加的"), "同版本重跑把用户的修改冲掉了");
+    assert!(
+        after.contains("mine"),
+        "re-running at the same version clobbered the user's edit"
+    );
 }
 
 #[test]
@@ -276,15 +351,15 @@ fn local_notebooks_shadow_nothing_and_both_load() {
     jot(&home, &["doctor"]);
     let dir = home.join("notebooks").join("local");
     std::fs::create_dir_all(&dir).unwrap();
-    // 和内置同名，但变量声明不同
+    // Same name as a built-in, but different variable declarations
     std::fs::write(
         dir.join("git.md"),
-        "---\nname: git\nvars:\n  branch:\n    from: profile\n---\n\n## 我的分支命令\n\n```sh\ngit switch {{branch}}\n```\n",
+        "---\nname: git\nvars:\n  branch:\n    from: profile\n---\n\n## My branch command\n\n```sh\ngit switch {{branch}}\n```\n",
     )
     .unwrap();
     jot(&home, &["profile", "set", "branch", "feature/x"]);
 
-    let o = jot(&home, &["pick", "-q", "我的分支命令", "--first"]);
+    let o = jot(&home, &["pick", "-q", "My branch command", "--first"]);
     assert!(o.status.success(), "{}", stderr(&o));
     assert_eq!(stdout(&o).trim(), "git switch feature/x");
 }
@@ -293,36 +368,54 @@ fn local_notebooks_shadow_nothing_and_both_load() {
 fn usage_is_recorded_and_ranks_entries() {
     let home = temp_home("usage");
     let usage_file = home.join("usage.toml");
-    assert!(!usage_file.exists(), "还没用过就有统计文件");
+    assert!(
+        !usage_file.exists(),
+        "a usage file exists before anything was used"
+    );
 
     for _ in 0..3 {
-        let o = jot(&home, &["pick", "-q", "撤销最后一次提交 保留", "--first"]);
+        let o = jot(
+            &home,
+            &["pick", "-q", "Undo the last commit but keep", "--first"],
+        );
         assert!(o.status.success(), "{}", stderr(&o));
     }
 
-    let recorded = std::fs::read_to_string(&usage_file).expect("没生成 usage.toml");
+    let recorded = std::fs::read_to_string(&usage_file).expect("usage.toml was not created");
     assert!(
-        recorded.contains("git/撤销最后一次提交，但保留改动"),
-        "条目没被记下来：{recorded}"
+        recorded.contains("[\"git/"),
+        "the entry was not recorded under a git id: {recorded}"
     );
-    assert!(recorded.contains("count = 3"), "次数不对：{recorded}");
+    assert!(
+        recorded.contains("count = 3"),
+        "the count is wrong: {recorded}"
+    );
 
-    // doctor 应该把它列为最常用
+    // doctor should list it as the most used
     let d = stdout(&jot(&home, &["doctor"]));
-    assert!(d.contains("累计使用        3 次"), "doctor 没统计到：{d}");
-    assert!(d.contains("最常用"), "doctor 没显示最常用列表");
+    assert!(
+        d.contains("total uses      3"),
+        "doctor did not count it: {d}"
+    );
+    assert!(
+        d.contains("most used"),
+        "doctor did not show the most-used list"
+    );
 }
 
 #[test]
 fn usage_file_corruption_does_not_break_the_tool() {
     let home = temp_home("badusage");
     jot(&home, &["doctor"]);
-    std::fs::write(home.join("usage.toml"), "这不是合法的 TOML {{{").unwrap();
+    std::fs::write(home.join("usage.toml"), "this is not valid TOML {{{").unwrap();
 
-    let o = jot(&home, &["pick", "-q", "撤销最后一次提交 保留", "--first"]);
+    let o = jot(
+        &home,
+        &["pick", "-q", "Undo the last commit but keep", "--first"],
+    );
     assert!(
         o.status.success(),
-        "统计文件损坏导致工具挂了：{}",
+        "a corrupt usage file broke the tool: {}",
         stderr(&o)
     );
     assert_eq!(stdout(&o).trim(), "git reset --soft HEAD~1");
@@ -340,30 +433,36 @@ fn a_broken_notebook_does_not_break_the_rest() {
     )
     .unwrap();
 
-    let o = jot(&home, &["pick", "-q", "撤销最后一次提交 保留", "--first"]);
+    let o = jot(
+        &home,
+        &["pick", "-q", "Undo the last commit but keep", "--first"],
+    );
     assert!(
         o.status.success(),
-        "一本笔记本写坏就整个用不了：{}",
+        "one malformed notebook broke everything: {}",
         stderr(&o)
     );
-    assert!(stderr(&o).contains("跳过"), "没有提示哪本笔记本被跳过了");
+    assert!(
+        stderr(&o).contains("skipping"),
+        "did not say which notebook was skipped"
+    );
 }
 
-// ─────────────────────── 社区源 ───────────────────────
+// ─────────────────────── community sources ───────────────────────
 
-/// 造一个本地 git 仓库当社区源，全程离线。
+/// Build a local git repo to act as a community source, entirely offline.
 fn make_source_repo(tag: &str) -> PathBuf {
     let repo = std::env::temp_dir().join(format!("jot-src-{}-{}", tag, std::process::id()));
     let _ = std::fs::remove_dir_all(&repo);
     std::fs::create_dir_all(repo.join("notebooks")).unwrap();
     std::fs::write(
         repo.join("notebooks").join("shared.md"),
-        "---\nname: shared\ndescription: 共享笔记本\n---\n\n## 社区提供的命令\n\n```sh\necho from-community\n```\n",
+        "---\nname: shared\ndescription: shared notebook\n---\n\n## A command from the community\n\n```sh\necho from-community\n```\n",
     )
     .unwrap();
     std::fs::write(
         repo.join("README.md"),
-        "# 这个仓库\n\n## 安装\n\n```sh\necho readme\n```\n",
+        "# This repository\n\n## Install\n\n```sh\necho readme\n```\n",
     )
     .unwrap();
 
@@ -372,7 +471,7 @@ fn make_source_repo(tag: &str) -> PathBuf {
             .current_dir(&repo)
             .args(args)
             .output()
-            .expect("git 跑不起来");
+            .expect("could not run git");
     };
     git(&["init", "-b", "main"]);
     git(&["add", "-A"]);
@@ -394,51 +493,63 @@ fn a_community_source_can_be_added_listed_and_removed() {
     let repo = make_source_repo("basic");
     let repo_str = repo.to_string_lossy().replace('\\', "/");
 
-    let add = jot(&home, &["add", &repo_str, "--name", "community"]);
+    let add = jot(&home, &["add", &repo_str, "--name", "extsrc"]);
     assert!(add.status.success(), "{}", stderr(&add));
     assert!(
-        stderr(&add).contains("1 条"),
-        "没报告条目数：{}",
+        stderr(&add).contains("-> 1 commands"),
+        "did not report the entry count: {}",
         stderr(&add)
     );
-    // 装完必须提醒动态变量是禁用的
+    // Installing must warn that dynamic variables are off
     assert!(
         stderr(&add).contains("trust"),
-        "没提示信任模型：{}",
+        "did not mention the trust model: {}",
         stderr(&add)
     );
 
-    // 条目要能被搜到
-    let picked = jot(&home, &["pick", "-q", "社区提供的命令", "--first"]);
+    // The entries must be searchable
+    let picked = jot(
+        &home,
+        &["pick", "-q", "A command from the community", "--first"],
+    );
     assert!(picked.status.success(), "{}", stderr(&picked));
     assert_eq!(stdout(&picked).trim(), "echo from-community");
 
-    // README 不该被当成笔记本
+    // The README must not be treated as a notebook
     let ls = stdout(&jot(&home, &["ls"]));
-    assert!(ls.contains("# shared"), "社区笔记本没出现在 ls 里");
-    assert!(!ls.contains("echo readme"), "仓库 README 被当成笔记本收了");
-
-    // 列表里默认是未授信
-    let sources = stdout(&jot(&home, &["sources"]));
-    assert!(sources.contains("community"), "{sources}");
     assert!(
-        sources.contains("未授信"),
-        "外部源默认就被信任了：{sources}"
+        ls.contains("# shared"),
+        "the community notebook is missing from ls"
+    );
+    assert!(
+        !ls.contains("echo readme"),
+        "the repository README was picked up as a notebook"
     );
 
-    // 授信 / 撤销
-    assert!(jot(&home, &["trust", "community"]).status.success());
-    assert!(stdout(&jot(&home, &["sources"])).contains("已授信"));
-    assert!(jot(&home, &["untrust", "community"]).status.success());
-    assert!(stdout(&jot(&home, &["sources"])).contains("未授信"));
+    // Untrusted by default in the listing
+    let sources = stdout(&jot(&home, &["sources"]));
+    assert!(sources.contains("extsrc"), "{sources}");
+    assert!(
+        sources.contains("untrusted"),
+        "an external source was trusted by default: {sources}"
+    );
 
-    // 卸载
-    assert!(jot(&home, &["remove", "community"]).status.success());
+    // Trust and untrust
+    assert!(jot(&home, &["trust", "extsrc"]).status.success());
+    assert!(stdout(&jot(&home, &["sources"])).contains(" trusted"));
+    assert!(jot(&home, &["untrust", "extsrc"]).status.success());
+    assert!(stdout(&jot(&home, &["sources"])).contains("untrusted"));
+
+    // Uninstall
+    assert!(jot(&home, &["remove", "extsrc"]).status.success());
     let after = stdout(&jot(&home, &["sources"]));
-    assert!(!after.contains("community"), "卸载后还在：{after}");
+    assert!(
+        !after.contains("extsrc"),
+        "still listed after removal: {after}"
+    );
     assert!(
         !stdout(&jot(&home, &["ls"])).contains("# shared"),
-        "卸载后条目还在"
+        "the entries survived removal"
     );
 }
 
@@ -452,8 +563,11 @@ fn adding_the_same_source_twice_is_refused() {
         .status
         .success());
     let again = jot(&home, &["add", &repo_str, "--name", "dup"]);
-    assert!(!again.status.success(), "重复安装没被拒绝");
-    assert!(stderr(&again).contains("jot sync"), "没告诉用户该怎么更新");
+    assert!(!again.status.success(), "installing twice was not refused");
+    assert!(
+        stderr(&again).contains("jot sync"),
+        "did not tell the user how to update"
+    );
 }
 
 #[test]
@@ -467,12 +581,16 @@ fn sync_reports_up_to_date_then_picks_up_changes() {
 
     let first = jot(&home, &["sync", "s"]);
     assert!(first.status.success(), "{}", stderr(&first));
-    assert!(stderr(&first).contains("已是最新"), "{}", stderr(&first));
+    assert!(
+        stderr(&first).contains("already up to date"),
+        "{}",
+        stderr(&first)
+    );
 
-    // 上游加一条
+    // Add an entry upstream
     std::fs::write(
         repo.join("notebooks").join("shared.md"),
-        "---\nname: shared\n---\n\n## 社区提供的命令\n\n```sh\necho from-community\n```\n\n## 后来加的\n\n```sh\necho newly-added\n```\n",
+        "---\nname: shared\n---\n\n## A command from the community\n\n```sh\necho from-community\n```\n\n## Added later\n\n```sh\necho newly-added\n```\n",
     )
     .unwrap();
     for args in [
@@ -496,9 +614,9 @@ fn sync_reports_up_to_date_then_picks_up_changes() {
 
     let second = jot(&home, &["sync", "s"]);
     assert!(second.status.success(), "{}", stderr(&second));
-    assert!(stderr(&second).contains("已更新"), "{}", stderr(&second));
+    assert!(stderr(&second).contains("updated"), "{}", stderr(&second));
 
-    let o = jot(&home, &["pick", "-q", "后来加的", "--first"]);
+    let o = jot(&home, &["pick", "-q", "Added later", "--first"]);
     assert_eq!(stdout(&o).trim(), "echo newly-added");
 }
 
@@ -507,11 +625,132 @@ fn unknown_source_names_are_rejected() {
     let home = temp_home("badsource");
     jot(&home, &["doctor"]);
     for args in [
-        vec!["trust", "不存在"],
-        vec!["remove", "不存在"],
-        vec!["sync", "不存在"],
+        vec!["trust", "does-not-exist"],
+        vec!["remove", "does-not-exist"],
+        vec!["sync", "does-not-exist"],
     ] {
         let o = jot(&home, &args);
-        assert!(!o.status.success(), "{:?} 居然成功了", args);
+        assert!(!o.status.success(), "{:?} unexpectedly succeeded", args);
     }
+}
+
+// ─────────────────────── language ───────────────────────
+
+fn has_cjk(s: &str) -> bool {
+    s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+}
+
+#[test]
+fn the_interface_switches_language() {
+    let home = temp_home("lang");
+
+    let en = jot_in("en", &home, &["doctor"]);
+    assert!(en.status.success(), "{}", stderr(&en));
+    assert!(stdout(&en).contains("notebooks"), "{}", stdout(&en));
+    assert!(
+        !has_cjk(&stdout(&en)),
+        "English output contains Chinese:\n{}",
+        stdout(&en)
+    );
+
+    let zh = jot_in("zh", &home, &["doctor"]);
+    assert!(zh.status.success(), "{}", stderr(&zh));
+    assert!(
+        has_cjk(&stdout(&zh)),
+        "Chinese output is not Chinese:\n{}",
+        stdout(&zh)
+    );
+}
+
+#[test]
+fn notebooks_switch_language_with_the_interface() {
+    let home = temp_home("langnb");
+
+    // Same entry, same command, different prose
+    let zh = jot_in(
+        "zh",
+        &home,
+        &["pick", "-q", "撤销最后一次提交 保留", "--first"],
+    );
+    assert!(zh.status.success(), "{}", stderr(&zh));
+    assert_eq!(stdout(&zh).trim(), "git reset --soft HEAD~1");
+    assert!(stderr(&zh).contains("撤销"), "{}", stderr(&zh));
+
+    let en = jot_in(
+        "en",
+        &home,
+        &["pick", "-q", "Undo the last commit but keep", "--first"],
+    );
+    assert!(en.status.success(), "{}", stderr(&en));
+    assert_eq!(stdout(&en).trim(), "git reset --soft HEAD~1");
+    assert!(stderr(&en).contains("Undo"), "{}", stderr(&en));
+
+    // Only one language's notebooks are on disk at a time
+    let ls = stdout(&jot_in("en", &home, &["ls", "--notebook", "git"]));
+    assert!(
+        !has_cjk(&ls),
+        "both language sets are installed at once:\n{ls}"
+    );
+}
+
+#[test]
+fn jot_lang_persists_and_overrides_the_environment() {
+    let home = temp_home("langset");
+
+    // An explicit setting beats JOT_LANG
+    assert!(jot_in("en", &home, &["lang", "zh"]).status.success());
+    let out = stdout(&jot_in("en", &home, &["doctor"]));
+    assert!(has_cjk(&out), "`jot lang zh` did not stick:\n{out}");
+
+    // auto hands control back to the environment
+    assert!(jot_in("en", &home, &["lang", "auto"]).status.success());
+    let out = stdout(&jot_in("en", &home, &["doctor"]));
+    assert!(
+        !has_cjk(&out),
+        "auto did not fall back to the environment:\n{out}"
+    );
+
+    let bad = jot_in("en", &home, &["lang", "klingon"]);
+    assert!(
+        !bad.status.success(),
+        "an unknown language should be an error"
+    );
+}
+
+/// Usage ids are keyed on the command rather than the title, so switching
+/// language must not throw away the frecency data you have built up.
+#[test]
+fn usage_survives_a_language_switch() {
+    let home = temp_home("usagelang");
+
+    for _ in 0..3 {
+        let o = jot_in(
+            "en",
+            &home,
+            &["pick", "-q", "Undo the last commit but keep", "--first"],
+        );
+        assert!(o.status.success(), "{}", stderr(&o));
+    }
+    let before = std::fs::read_to_string(home.join("usage.toml")).unwrap();
+    assert!(before.contains("count = 3"), "{before}");
+
+    // Same entry, now in Chinese: the count must keep climbing, not restart
+    let o = jot_in(
+        "zh",
+        &home,
+        &["pick", "-q", "撤销最后一次提交 保留", "--first"],
+    );
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert_eq!(stdout(&o).trim(), "git reset --soft HEAD~1");
+
+    let after = std::fs::read_to_string(home.join("usage.toml")).unwrap();
+    assert!(
+        after.contains("count = 4"),
+        "switching language reset the usage count:\n{after}"
+    );
+    assert_eq!(
+        after.matches("[\"git/").count(),
+        1,
+        "the same entry was recorded twice under different ids:\n{after}"
+    );
 }

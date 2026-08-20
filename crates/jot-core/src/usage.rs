@@ -1,9 +1,10 @@
-//! 使用频次 + 最近使用（frecency）。
+//! Frequency and recency (frecency).
 //!
-//! 检索问题的核心是「我常用的那几条要在最前面」。用得越多、用得越近的条目
-//! 排得越靠前，工具用得越久越顺手。空搜索词时这就是默认排序。
+//! The heart of a retrieval problem is having your usual few at the top. The
+//! more and the more recently an entry is used, the higher it ranks, so the
 //!
-//! 存在 `~/.jot/usage.toml`，是纯统计数据，丢了也只是回到初始排序。
+//! tool improves with use. Stored in `~/.jot/usage.toml`; losing that file
+//! only resets the ordering.
 
 use crate::config::Paths;
 use anyhow::Result;
@@ -13,7 +14,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Stat {
     pub count: u32,
-    /// UNIX 秒
+    /// UNIX seconds
     pub last: u64,
 }
 
@@ -48,10 +49,10 @@ impl Usage {
         e.last = now_secs();
     }
 
-    /// 排序加权。没用过的条目返回 0，保持原有的文件顺序。
+    /// Ranking weight. Zero for anything unused, which keeps the original file order.
     ///
-    /// 数量级刻意压在模糊匹配分数之下：常用条目会在结果里往上浮，
-    /// 但不会盖过明确的搜索词 —— 你搜什么就该出什么。
+    /// Deliberately kept below the fuzzy-match scale: frequent entries float up,
+    /// but never override an explicit search term - what you search for is what you get.
     pub fn boost(&self, id: &str, now: u64) -> i64 {
         let Some(s) = self.0.get(id) else { return 0 };
         let age = now.saturating_sub(s.last);
@@ -64,12 +65,12 @@ impl Usage {
             a if a < 30 * DAY => 1,
             _ => 0,
         };
-        // count 取对数增长，避免用过 500 次的条目永远霸榜
+        // Sub-linear in count, so an entry used 500 times cannot squat the top
         let volume = (s.count as f64).sqrt().round() as i64;
         (volume + 1) * recency
     }
 
-    /// 用得最多的前 N 条。
+    /// The N most-used entries.
     pub fn top(&self, n: usize) -> Vec<(&str, &Stat)> {
         let mut v: Vec<(&str, &Stat)> = self.0.iter().map(|(k, s)| (k.as_str(), s)).collect();
         v.sort_by_key(|(_, s)| std::cmp::Reverse(s.count));
@@ -89,7 +90,7 @@ mod tests {
     #[test]
     fn unused_entries_get_no_boost() {
         let u = Usage::default();
-        assert_eq!(u.boost("git/未用过", now_secs()), 0);
+        assert_eq!(u.boost("git/never used", now_secs()), 0);
     }
 
     #[test]
@@ -100,7 +101,10 @@ mod tests {
             u.record("b");
         }
         let now = now_secs();
-        assert!(u.boost("b", now) > u.boost("a", now), "用得多的没排前面");
+        assert!(
+            u.boost("b", now) > u.boost("a", now),
+            "the more-used entry did not rank higher"
+        );
     }
 
     #[test]
@@ -123,7 +127,7 @@ mod tests {
         );
         assert!(
             u.boost("fresh", now) > u.boost("stale", now),
-            "最近用过的没排前面"
+            "the recently used entry did not rank higher"
         );
     }
 
@@ -138,10 +142,14 @@ mod tests {
                 last: now - 365 * 86_400,
             },
         );
-        assert_eq!(u.boost("ancient", now), 0, "一年没碰的条目仍在加权");
+        assert_eq!(
+            u.boost("ancient", now),
+            0,
+            "an entry untouched for a year is still weighted"
+        );
     }
 
-    /// 加权不能盖过模糊匹配 —— 搜什么就该出什么。
+    /// The weight must not override fuzzy matching - what you search for is what you get.
     #[test]
     fn boost_stays_below_fuzzy_scale() {
         let now = now_secs();
@@ -155,7 +163,7 @@ mod tests {
         );
         assert!(
             u.boost("hot", now) < 1_000,
-            "加权 {} 太大，会盖过搜索词",
+            "weight {} is too large and would swamp the search term",
             u.boost("hot", now)
         );
     }

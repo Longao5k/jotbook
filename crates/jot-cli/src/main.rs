@@ -84,6 +84,21 @@ enum Cmd {
         /// Which personal notebook to save into
         #[arg(long, short)]
         notebook: Option<String>,
+        /// Title. Given here, jot saves without opening the picker
+        #[arg(long, short)]
+        title: Option<String>,
+        /// Description, only used alongside --title
+        #[arg(long, short)]
+        desc: Option<String>,
+        /// Mark it dangerous, so using it asks for confirmation
+        #[arg(long)]
+        confirm: bool,
+        /// Restrict to a platform: windows, linux or macos
+        #[arg(long)]
+        platform: Option<String>,
+        /// Extra search keywords, comma separated
+        #[arg(long)]
+        tags: Option<String>,
     },
     /// List every entry
     #[command(alias = "list")]
@@ -239,7 +254,23 @@ fn run() -> Result<i32> {
             line,
             first,
         }) => cmd_pick(&query, widget, &line, first),
-        Some(Cmd::Save { command, notebook }) => cmd_save(command, notebook),
+        Some(Cmd::Save {
+            command,
+            notebook,
+            title,
+            desc,
+            confirm,
+            platform,
+            tags,
+        }) => cmd_save(SaveArgs {
+            command,
+            notebook,
+            title,
+            desc,
+            confirm,
+            platform,
+            tags,
+        }),
         Some(Cmd::Ls { notebook }) => cmd_ls(notebook.as_deref()),
         Some(Cmd::Init { shell, key }) => cmd_init(&shell, key.as_deref()),
         Some(Cmd::Edit { notebook }) => cmd_edit(notebook.as_deref()),
@@ -514,7 +545,26 @@ fn copy_to_clipboard(s: &str) -> Result<()> {
 
 // ─────────────────────────── save ───────────────────────────
 
-fn cmd_save(command: Vec<String>, notebook: Option<String>) -> Result<i32> {
+struct SaveArgs {
+    command: Vec<String>,
+    notebook: Option<String>,
+    title: Option<String>,
+    desc: Option<String>,
+    confirm: bool,
+    platform: Option<String>,
+    tags: Option<String>,
+}
+
+fn cmd_save(args: SaveArgs) -> Result<i32> {
+    let SaveArgs {
+        command,
+        notebook,
+        title,
+        desc,
+        confirm,
+        platform,
+        tags,
+    } = args;
     let paths = Paths::discover()?;
     let cfg = Config::load(&paths);
     let profiles = Profiles::load(&paths);
@@ -533,34 +583,57 @@ fn cmd_save(command: Vec<String>, notebook: Option<String>) -> Result<i32> {
     // Reverse parameterization: swap in variables for values from the profile
     let (parameterized, applied) = capture::parameterize(&raw, &profiles, cfg.profile_name());
 
-    let mut ui = Ui::new()?;
-    let title = match ui.ask_text(
-        &parameterized,
-        t!("标题", "Title").as_ref(),
-        Some(&capture::guess_title(&raw)),
-    )? {
-        Some(t) if !t.trim().is_empty() => t,
+    // With a title given there is nothing to ask, so this stays scriptable
+    // and usable from a shell that cannot host a picker.
+    let (title, desc) = match title {
+        Some(t) if !t.trim().is_empty() => (t, desc.unwrap_or_default()),
         _ => {
+            let mut ui = Ui::new()?;
+            let asked = ui.ask_text(
+                &parameterized,
+                t!("标题", "Title").as_ref(),
+                Some(&capture::guess_title(&raw)),
+            )?;
+            let Some(t) = asked.filter(|t| !t.trim().is_empty()) else {
+                drop(ui);
+                return Ok(EXIT_CANCEL);
+            };
+            let d = ui
+                .ask_text(
+                    &parameterized,
+                    t!("说明（可留空）", "Description (optional)").as_ref(),
+                    Some(""),
+                )?
+                .unwrap_or_default();
             drop(ui);
-            return Ok(EXIT_CANCEL);
+            (t, d)
         }
     };
-    let desc = ui
-        .ask_text(
-            &parameterized,
-            t!("说明（可留空）", "Description (optional)").as_ref(),
-            Some(""),
-        )?
-        .unwrap_or_default();
-    drop(ui);
 
-    let lang = capture::guess_lang(&raw);
+    // An explicit platform settles the fence language: a linux entry is not
+    // PowerShell just because it was saved from a Windows box.
+    let guessed = capture::guess_lang(&raw);
+    let mut fence = match platform.as_deref() {
+        Some("linux") | Some("macos") if guessed != "sql" => "sh".to_string(),
+        Some("windows") if guessed != "sql" => "ps1".to_string(),
+        _ => guessed.to_string(),
+    };
+    if let Some(p) = platform.as_deref() {
+        fence.push_str(&format!(" @platform={p}"));
+    }
+    if confirm {
+        fence.push_str(" @confirm");
+    }
+    if let Some(tg) = tags.as_deref() {
+        fence.push_str(&format!(" @tags={tg}"));
+    }
+
     let path = capture::append(
         &paths,
         notebook.as_deref(),
         &title,
         &desc,
-        lang,
+        &fence,
         &parameterized,
     )?;
 
@@ -750,12 +823,34 @@ fn cmd_new(name: &str) -> Result<i32> {
             t!("{} 已经存在了", "{} already exists", path.display())
         );
     }
-    std::fs::write(
-        &path,
-        format!(
-            "---\nname: {name}\ndescription: \ntags: []\n---\n\n## 第一条命令\n\n说明写在这里。\n\n```sh\necho {{{{name}}}}\n```\n"
-        ),
-    )?;
+    // The format reference lives in a comment: it should teach the syntax
+    // without adding a dummy entry to everyone's search results.
+    let template = t!(
+        "---\nname: {name}\ndescription: \ntags: []\n---\n\n\
+<!--\n\
+格式参考 —— 写完自己的条目后可以把这段删掉。\n\n\
+## 条目标题\n\n\
+说明写在这里：为什么用、有什么坑。\n\n\
+```sh @platform=linux @confirm @tags=deploy\n\
+sudo systemctl restart {{{{service}}}}\n\
+```\n\n\
+属性：@platform=windows|linux|macos   @confirm   @remote   @tags=a,b\n\
+变量：{{{{service}}}} 每次问你；名字和 Profile 里的键一致就自动代入\n\
+-->\n",
+        "---\nname: {name}\ndescription: \ntags: []\n---\n\n\
+<!--\n\
+Format reference - delete this once you have entries of your own.\n\n\
+## Entry title\n\n\
+The description goes here: why you use it, what to watch out for.\n\n\
+```sh @platform=linux @confirm @tags=deploy\n\
+sudo systemctl restart {{{{service}}}}\n\
+```\n\n\
+Attributes: @platform=windows|linux|macos   @confirm   @remote   @tags=a,b\n\
+Variables:  {{{{service}}}} asks you each time, or resolves from your profile\n\
+-->\n",
+        name = name
+    );
+    std::fs::write(&path, template.as_ref())?;
     eprintln!(
         "{}",
         t!("jot: 建好了 {}", "jot: created {}", path.display())
@@ -1027,8 +1122,16 @@ fn cmd_notebooks() -> Result<i32> {
             let visible = n.entries.iter().filter(|e| e.visible_on(plat)).count();
             (n.name.clone(), visible, n.description.clone())
         })
-        .filter(|(_, visible, _)| *visible > 0)
         .collect();
+    // Keep a notebook you just created and have not filled in yet, but drop
+    // one whose entries are all hidden by @platform - that is just noise.
+    rows.retain(|(name, visible, _)| {
+        *visible > 0
+            || lib
+                .notebooks
+                .iter()
+                .any(|n| n.name == *name && n.entries.is_empty())
+    });
     rows.sort_by(|a, b| a.0.cmp(&b.0));
 
     for (name, visible, description) in &rows {
@@ -1253,12 +1356,24 @@ fn cmd_doctor() -> Result<i32> {
     Ok(0)
 }
 
+/// Open a notebook in the user's editor.
+///
+/// Deliberately does nothing when this is not an interactive session, or when
+/// EDITOR is explicitly set to empty. A script or a test calling `jot new`
+/// should not make a window appear on somebody's screen.
 fn open_editor(path: &Path) -> Result<()> {
-    if let Ok(ed) = std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")) {
-        if !ed.trim().is_empty() {
-            Command::new(ed).arg(path).status()?;
+    let editor = std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR"));
+    if let Ok(ed) = &editor {
+        if ed.trim().is_empty() {
             return Ok(());
         }
+    }
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Ok(());
+    }
+    if let Ok(ed) = editor {
+        Command::new(ed).arg(path).status()?;
+        return Ok(());
     }
     let status = if cfg!(target_os = "windows") {
         Command::new("cmd")

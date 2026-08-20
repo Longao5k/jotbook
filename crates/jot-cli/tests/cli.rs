@@ -231,10 +231,13 @@ fn new_notebook_is_created_and_indexed() {
     let path = home.join("notebooks").join("local").join("scratch.md");
     assert!(path.is_file(), "the new notebook was not created");
 
-    let o = jot(&home, &["ls", "--notebook", "scratch"]);
+    // A new notebook has no entries yet, so it will not appear in `ls`, but
+    // you must still be able to find out that it exists
+    let o = jot(&home, &["notebooks"]);
     assert!(
-        stdout(&o).contains("scratch"),
-        "the new notebook was not indexed"
+        stdout(&o).contains("@scratch"),
+        "a newly created notebook is invisible: {}",
+        stdout(&o)
     );
 }
 
@@ -840,4 +843,172 @@ fn the_picker_does_not_depend_on_stderr() {
         "expected the terminal guard, got: {}",
         stderr(&o)
     );
+}
+
+/// `jot save --title` must not need a picker: it has to work from a script,
+/// and from any shell that cannot host one.
+#[test]
+fn save_with_a_title_is_non_interactive() {
+    let home = temp_home("savetitle");
+    jot(&home, &["new", "work"]);
+
+    let o = jot(
+        &home,
+        &[
+            "save",
+            "-n",
+            "work",
+            "--title",
+            "Restart the API",
+            "--desc",
+            "Required after an appsettings change.",
+            "--confirm",
+            "--platform",
+            "linux",
+            "--tags",
+            "deploy,ops",
+            "sudo systemctl restart api.service",
+        ],
+    );
+    assert!(o.status.success(), "{}", stderr(&o));
+
+    let md = std::fs::read_to_string(home.join("notebooks").join("local").join("work.md")).unwrap();
+    assert!(md.contains("## Restart the API"), "{md}");
+    assert!(md.contains("Required after an appsettings change."), "{md}");
+    assert!(md.contains("@confirm"), "attribute lost: {md}");
+    assert!(md.contains("@platform=linux"), "attribute lost: {md}");
+    assert!(md.contains("@tags=deploy,ops"), "attribute lost: {md}");
+    assert!(md.contains("sudo systemctl restart api.service"), "{md}");
+}
+
+/// The attributes must survive a round trip through the parser, not merely be
+/// present as text.
+#[test]
+fn saved_attributes_are_parsed_back() {
+    let home = temp_home("saveroundtrip");
+    jot(&home, &["new", "work"]);
+    jot(
+        &home,
+        &[
+            "save",
+            "-n",
+            "work",
+            "--title",
+            "Zzdangerous thing",
+            "--confirm",
+            "--tags",
+            "danger",
+            "echo careful",
+        ],
+    );
+
+    // @confirm has to reach the resolver, which announces it in --first mode
+    let o = jot(&home, &["pick", "-q", "Zzdangerous thing", "--first"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert_eq!(stdout(&o).trim(), "echo careful");
+    assert!(
+        stderr(&o).contains("dangerous"),
+        "@confirm did not survive the round trip: {}",
+        stderr(&o)
+    );
+
+    // And the tag has to be usable as a scope
+    let listed = stdout(&jot(&home, &["ls", "--notebook", "work"]));
+    assert!(listed.contains("Zzdangerous thing"), "{listed}");
+}
+
+/// Reverse parameterization is the whole point of saving through jot rather
+/// than by hand: a profile value in the command becomes a variable.
+#[test]
+fn save_parameterizes_against_the_profile() {
+    let home = temp_home("saveparam");
+    jot(&home, &["new", "work"]);
+    jot(
+        &home,
+        &[
+            "profile",
+            "set",
+            "service",
+            "kestrel-orders-api.service",
+        ],
+    );
+
+    let o = jot(
+        &home,
+        &[
+            "save",
+            "-n",
+            "work",
+            "--title",
+            "Zzrestart backend",
+            "sudo systemctl restart kestrel-orders-api.service",
+        ],
+    );
+    assert!(o.status.success(), "{}", stderr(&o));
+
+    let md = std::fs::read_to_string(home.join("notebooks").join("local").join("work.md")).unwrap();
+    assert!(
+        md.contains("sudo systemctl restart {{service}}"),
+        "the profile value was not turned into a variable:\n{md}"
+    );
+
+    // And it resolves straight back out of the profile
+    let picked = jot(&home, &["pick", "-q", "Zzrestart backend", "--first"]);
+    assert_eq!(
+        stdout(&picked).trim(),
+        "sudo systemctl restart kestrel-orders-api.service"
+    );
+}
+
+/// A newly created notebook must teach the format without putting a dummy
+/// entry into everyone's search results.
+#[test]
+fn a_new_notebook_adds_no_searchable_entry() {
+    let home = temp_home("newclean");
+    let before = stdout(&jot(&home, &["ls"])).lines().count();
+    jot(&home, &["new", "scratchpad"]);
+    let after = stdout(&jot(&home, &["ls"])).lines().count();
+
+    assert_eq!(
+        before, after,
+        "creating a notebook added entries to the list"
+    );
+
+    // The example is still in the file, as a comment
+    let md = std::fs::read_to_string(home.join("notebooks").join("local").join("scratchpad.md"))
+        .unwrap();
+    assert!(
+        md.contains("<!--"),
+        "no format reference in the template:\n{md}"
+    );
+    assert!(
+        md.contains("@confirm"),
+        "the reference does not show attributes:\n{md}"
+    );
+}
+
+/// Saving a POSIX command from Windows must not label it PowerShell.
+#[test]
+fn platform_settles_the_fence_language() {
+    let home = temp_home("fencelang");
+    jot(&home, &["new", "work"]);
+    jot(
+        &home,
+        &[
+            "save",
+            "-n",
+            "work",
+            "--title",
+            "Zzrestart",
+            "--platform",
+            "linux",
+            "sudo systemctl restart api.service",
+        ],
+    );
+    let md = std::fs::read_to_string(home.join("notebooks").join("local").join("work.md")).unwrap();
+    assert!(
+        md.contains("```sh @platform=linux"),
+        "a linux command was not labelled sh:\n{md}"
+    );
+    assert!(!md.contains("```ps1 @platform=linux"), "{md}");
 }

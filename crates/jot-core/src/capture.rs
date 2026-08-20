@@ -202,9 +202,37 @@ pub fn guess_lang(command: &str) -> &'static str {
     const PS: &[&str] = &[
         "get-", "set-", "new-", "remove-", "start-", "stop-", "$env:",
     ];
+    // Commands that only exist on a POSIX system. Without these, saving
+    // `sudo systemctl restart ...` from Windows would label it ps1.
+    const POSIX: &[&str] = &[
+        "sudo ",
+        "systemctl",
+        "journalctl",
+        "apt ",
+        "apt-get",
+        "yum ",
+        "dnf ",
+        "chmod ",
+        "chown ",
+        "./",
+        "grep ",
+        "awk ",
+        "sed ",
+        "ls -",
+        "rm -rf",
+        "ssh ",
+        "scp ",
+        "rsync ",
+        "tar ",
+        "df -",
+        "du -",
+        "ps aux",
+    ];
 
     if SQL.iter().any(|p| l.starts_with(p)) {
         "sql"
+    } else if POSIX.iter().any(|p| l.starts_with(p)) {
+        "sh"
     } else if PS.iter().any(|p| l.starts_with(p)) || cfg!(target_os = "windows") {
         "ps1"
     } else {

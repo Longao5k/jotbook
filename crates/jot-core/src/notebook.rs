@@ -237,6 +237,9 @@ pub fn parse(path: &Path, text: &str) -> Result<Notebook> {
     let mut title = String::new();
     let mut desc: Vec<String> = Vec::new();
 
+    // Markdown comments hold format examples and notes-to-self. Their content
+    // is not entries, so a `## heading` inside one must not become searchable.
+    let mut in_comment = false;
     let mut in_fence = false;
     let mut fence_ticks = 0usize;
     let mut fence_indent = 0usize;
@@ -246,6 +249,23 @@ pub fn parse(path: &Path, text: &str) -> Result<Notebook> {
 
     for (idx, raw_line) in body.lines().enumerate() {
         let lineno = fm_lines + idx + 1;
+
+        if in_comment {
+            if raw_line.contains("-->") {
+                in_comment = false;
+            }
+            continue;
+        }
+        if !in_fence {
+            let t = raw_line.trim_start();
+            if t.starts_with("<!--") {
+                // A single-line comment opens and closes on the same line
+                if !t.contains("-->") {
+                    in_comment = true;
+                }
+                continue;
+            }
+        }
 
         if in_fence {
             let t = raw_line.trim_start();
@@ -423,5 +443,43 @@ Get-Service
         let src = "---\nname: x\n---\n\n```sh\nls\n```\n";
         let n = parse(Path::new("x.md"), src).unwrap();
         assert!(n.entries.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod comment_tests {
+    use super::*;
+
+    /// A format example lives in a comment so it teaches the syntax without
+    /// showing up as a searchable entry.
+    #[test]
+    fn html_comments_are_not_entries() {
+        let src = "---\nname: x\n---\n\n\
+<!--\n\
+## Example title\n\n\
+```sh\necho example\n```\n\
+-->\n\n\
+## Real entry\n\n\
+```sh\necho real\n```\n";
+        let nb = parse(Path::new("x.md"), src).unwrap();
+        assert_eq!(nb.entries.len(), 1, "the commented example became an entry");
+        assert_eq!(nb.entries[0].title, "Real entry");
+        assert_eq!(nb.entries[0].command, "echo real");
+    }
+
+    #[test]
+    fn single_line_comments_are_skipped() {
+        let src = "---\nname: x\n---\n\n<!-- a note -->\n\n## Real\n\n```sh\nls\n```\n";
+        let nb = parse(Path::new("x.md"), src).unwrap();
+        assert_eq!(nb.entries.len(), 1);
+    }
+
+    /// An arrow inside a command must not be mistaken for a comment close.
+    #[test]
+    fn comment_markers_inside_a_fence_are_literal() {
+        let src = "---\nname: x\n---\n\n## Real\n\n```sh\necho '<!-- not a comment -->'\n```\n";
+        let nb = parse(Path::new("x.md"), src).unwrap();
+        assert_eq!(nb.entries.len(), 1);
+        assert_eq!(nb.entries[0].command, "echo '<!-- not a comment -->'");
     }
 }

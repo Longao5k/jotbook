@@ -45,8 +45,12 @@ fn load_dir(dir: &std::path::Path, trusted: bool, skip_boilerplate: bool, out: &
                         e.trusted = false;
                     }
                 }
-                // Ordinary markdown in an external source often has no commands at all
-                if !nb.entries.is_empty() {
+                // Ordinary markdown in an external source often carries no
+                // commands at all, and pulling those in is just noise. A
+                // notebook of your own is different: you may have only just
+                // created it, and it has to stay visible until you fill it in.
+                let is_noise = skip_boilerplate && nb.entries.is_empty();
+                if !is_noise {
                     out.push(nb);
                 }
             }

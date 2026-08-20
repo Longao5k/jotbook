@@ -904,9 +904,30 @@ impl Ui {
     }
 }
 
+/// Serialises every test that draws, and pins the language while it does.
+///
+/// The language is one process-wide atomic. When the question-screen tests
+/// arrived they switched it mid-run, and the picker tests beside them - which
+/// had asserted English text for months - started failing on CI: two of the
+/// three runners have enough cores to actually interleave them. Windows passed
+/// and Linux and macOS did not, which reads like a platform bug and is not one.
+///
+/// Anything that renders goes through here, so the two can no longer overlap.
+#[cfg(test)]
+fn with_lang<T>(lang: jot_core::i18n::Lang, f: impl FnOnce() -> T) -> T {
+    static LANG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    // A panicking test poisons the mutex; that is its business, not the next
+    // test's, so take the guard either way.
+    let _g = LANG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    jot_core::i18n::set(lang);
+    f()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jot_core::i18n::Lang;
     use jot_core::notebook;
     use ratatui::backend::TestBackend;
     use std::path::Path;
@@ -938,6 +959,18 @@ Required after every config change.\n\n\
         n_hits: usize,
         selected: Option<usize>,
     ) -> String {
+        render_entries_in(Lang::En, owned, w, h, query, n_hits, selected)
+    }
+
+    fn render_entries_in(
+        lang: Lang,
+        owned: &[notebook::Entry],
+        w: u16,
+        h: u16,
+        query: &str,
+        n_hits: usize,
+        selected: Option<usize>,
+    ) -> String {
         use unicode_width::UnicodeWidthStr;
 
         let refs: Vec<&Entry> = owned.iter().collect();
@@ -945,22 +978,35 @@ Required after every config change.\n\n\
         let mut state = ListState::default();
         state.select(selected);
 
-        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(|f| draw_picker(f, &refs, &hits, query, &mut state))
-            .unwrap();
+        with_lang(lang, || {
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| draw_picker(f, &refs, &hits, query, &mut state))
+                .unwrap();
 
-        let buf = term.backend().buffer();
-        let mut out = String::new();
-        for y in 0..buf.area.height {
-            let mut x = 0u16;
-            while x < buf.area.width {
-                let sym = buf[(x, y)].symbol();
-                out.push_str(sym);
-                x += (UnicodeWidthStr::width(sym).max(1)) as u16;
+            let buf = term.backend().buffer();
+            let mut out = String::new();
+            for y in 0..buf.area.height {
+                let mut x = 0u16;
+                while x < buf.area.width {
+                    let sym = buf[(x, y)].symbol();
+                    out.push_str(sym);
+                    x += (UnicodeWidthStr::width(sym).max(1)) as u16;
+                }
+                out.push('\n');
             }
-            out.push('\n');
-        }
-        out
+            out
+        })
+    }
+
+    /// The picker draws in whichever language is set, and the test that proves
+    /// it is also the one that would catch the lock going missing again.
+    #[test]
+    fn the_picker_follows_the_language() {
+        let en = render_entries_in(Lang::En, &entries(), 90, 24, "", 2, Some(0));
+        assert!(en.contains("Dangerous command"), "{en}");
+
+        let zh = render_entries_in(Lang::Zh, &entries(), 90, 24, "", 2, Some(0));
+        assert!(zh.contains("危险命令"), "{zh}");
     }
 
     /// Regression: truncation used to count characters, so Chinese titles never
@@ -1180,30 +1226,34 @@ mod query_tests {
 #[cfg(test)]
 mod question_screens {
     use super::*;
-    use jot_core::i18n::{self, Lang};
+    use jot_core::i18n::Lang;
     use ratatui::backend::TestBackend;
-    use std::sync::Mutex;
 
-    /// The language is process-wide, so the tests that switch it take turns.
-    static LANG_LOCK: Mutex<()> = Mutex::new(());
-
-    fn dump(w: u16, h: u16, draw: impl FnOnce(&mut Frame)) -> String {
+    /// Draw one screen in `lang`, through the shared lock, so that nothing here
+    /// can change the language out from under a test drawing elsewhere.
+    fn dump_in(lang: Lang, w: u16, h: u16, draw: impl FnOnce(&mut Frame)) -> String {
         use unicode_width::UnicodeWidthStr;
 
-        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(draw).unwrap();
-        let buf = term.backend().buffer();
-        let mut out = String::new();
-        for y in 0..buf.area.height {
-            let mut x = 0u16;
-            while x < buf.area.width {
-                let sym = buf[(x, y)].symbol();
-                out.push_str(sym);
-                x += UnicodeWidthStr::width(sym).max(1) as u16;
+        with_lang(lang, || {
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(draw).unwrap();
+            let buf = term.backend().buffer();
+            let mut out = String::new();
+            for y in 0..buf.area.height {
+                let mut x = 0u16;
+                while x < buf.area.width {
+                    let sym = buf[(x, y)].symbol();
+                    out.push_str(sym);
+                    x += UnicodeWidthStr::width(sym).max(1) as u16;
+                }
+                out.push('\n');
             }
-            out.push('\n');
-        }
-        out
+            out
+        })
+    }
+
+    fn dump(w: u16, h: u16, draw: impl FnOnce(&mut Frame)) -> String {
+        dump_in(Lang::En, w, h, draw)
     }
 
     fn choices(vals: &[&str]) -> Vec<Choice> {
@@ -1216,14 +1266,14 @@ mod question_screens {
     }
 
     /// Draw all four at a comfortable size and hand back the text of each.
-    fn all_four(w: u16, h: u16) -> Vec<(&'static str, String)> {
+    fn all_four(lang: Lang, w: u16, h: u16) -> Vec<(&'static str, String)> {
         let opts = choices(&["api", "worker"]);
         let refs: Vec<&Choice> = opts.iter().collect();
         let rows = vec!["adb devices".to_string(), "adb shell".to_string()];
         vec![
             (
                 "ask_choice",
-                dump(w, h, |f| {
+                dump_in(lang, w, h, |f| {
                     let mut st = ListState::default();
                     st.select(Some(0));
                     draw_ask_choice(
@@ -1239,12 +1289,15 @@ mod question_screens {
             ),
             (
                 "ask_text",
-                dump(w, h, |f| draw_ask_text(f, "curl X", "url", "")),
+                dump_in(lang, w, h, |f| draw_ask_text(f, "curl X", "url", "")),
             ),
-            ("confirm", dump(w, h, |f| draw_confirm(f, "rm -rf /tmp/x"))),
+            (
+                "confirm",
+                dump_in(lang, w, h, |f| draw_confirm(f, "rm -rf /tmp/x")),
+            ),
             (
                 "multi_select",
-                dump(w, h, |f| {
+                dump_in(lang, w, h, |f| {
                     let mut st = ListState::default();
                     st.select(Some(0));
                     draw_multi_select(f, "Import", &rows, &[true, false], &mut st)
@@ -1257,25 +1310,20 @@ mod question_screens {
     /// shipping it. Every screen that accepts it has to say so.
     #[test]
     fn every_screen_that_takes_the_back_key_says_so() {
-        let _g = LANG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         for lang in [Lang::En, Lang::Zh] {
-            i18n::set(lang);
-            for (name, text) in all_four(100, 24) {
+            for (name, text) in all_four(lang, 100, 24) {
                 assert!(
                     text.contains("^B"),
                     "{name} does not mention the back key in {lang:?}:\n{text}"
                 );
             }
         }
-        i18n::set(Lang::En);
     }
 
     /// Esc is the way out and has to stay visible next to it.
     #[test]
     fn every_screen_still_offers_esc() {
-        let _g = LANG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        i18n::set(Lang::En);
-        for (name, text) in all_four(100, 24) {
+        for (name, text) in all_four(Lang::En, 100, 24) {
             assert!(text.contains("esc"), "{name} lost its esc hint:\n{text}");
         }
     }
@@ -1284,7 +1332,6 @@ mod question_screens {
     /// so an English user counted their selection in Chinese.
     #[test]
     fn the_checklist_counts_in_the_active_language() {
-        let _g = LANG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let rows = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let draw = |f: &mut Frame| {
             let mut st = ListState::default();
@@ -1292,24 +1339,18 @@ mod question_screens {
             draw_multi_select(f, "Import", &rows, &[true, true, false], &mut st)
         };
 
-        i18n::set(Lang::En);
-        let en = dump(80, 12, draw);
+        let en = dump_in(Lang::En, 80, 12, draw);
         assert!(en.contains("2/3 selected"), "no English count:\n{en}");
         assert!(!en.contains('已'), "Chinese leaked into English:\n{en}");
 
-        i18n::set(Lang::Zh);
-        let zh = dump(80, 12, draw);
+        let zh = dump_in(Lang::Zh, 80, 12, draw);
         assert!(zh.contains("已选 2/3"), "no Chinese count:\n{zh}");
-
-        i18n::set(Lang::En);
     }
 
     /// The one affordance that lets someone name a notebook that does not exist
     /// yet. Losing it would make `jot import text` unable to start a notebook.
     #[test]
     fn a_typed_value_that_is_not_on_the_list_is_offered_as_is() {
-        let _g = LANG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        i18n::set(Lang::En);
         let opts = choices(&["my", "docker"]);
         let refs: Vec<&Choice> = opts.iter().collect();
         let text = dump(80, 16, |f| {
@@ -1324,8 +1365,6 @@ mod question_screens {
     /// The promise the whole tool rests on, printed where it is read.
     #[test]
     fn the_confirm_screen_says_jot_will_not_run_it() {
-        let _g = LANG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        i18n::set(Lang::En);
         let text = dump(90, 12, |f| draw_confirm(f, "rm -rf /var/lib/data"));
         assert!(text.contains("rm -rf /var/lib/data"), "{text}");
         assert!(text.contains("never runs it"), "{text}");
@@ -1369,7 +1408,7 @@ mod question_screens {
     #[test]
     fn extreme_terminal_sizes_do_not_panic() {
         for (w, h) in [(1, 1), (3, 2), (10, 4), (20, 5), (200, 60), (400, 3)] {
-            for (name, _) in all_four(w, h) {
+            for (name, _) in all_four(Lang::En, w, h) {
                 let _ = name; // drawing without panicking is the assertion
             }
         }

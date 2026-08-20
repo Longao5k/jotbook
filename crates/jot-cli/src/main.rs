@@ -1882,10 +1882,17 @@ fn cmd_doctor() -> Result<i32> {
 /// left them to search. Editors disagree about the spelling; an unrecognised
 /// one just gets the path, which is what used to happen to everyone.
 fn editor_args(editor: &str, path: &Path, line: usize) -> Vec<String> {
-    let name = Path::new(editor.trim())
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_ascii_lowercase())
-        .unwrap_or_default();
+    // Split on both separators rather than going through Path: on Unix a
+    // backslash is an ordinary character, so `C:\...\Code.exe` would come back
+    // whole and match nothing. $EDITOR is a string someone typed, not
+    // necessarily a path shaped like the host's.
+    let raw = editor.trim();
+    let base = raw.rsplit(['/', '\\']).next().unwrap_or(raw);
+    let name = base
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(base)
+        .to_ascii_lowercase();
     let p = path.display().to_string();
     match name.as_str() {
         "code" | "code-insiders" | "codium" | "vscodium" | "cursor" | "windsurf" => {

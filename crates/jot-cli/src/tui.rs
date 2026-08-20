@@ -78,6 +78,17 @@ impl Drop for Ui {
     }
 }
 
+/// What a question screen came back with.
+///
+/// Esc means leave entirely - that is what people expect of it, and taking
+/// that away was a mistake. Ctrl+B is the separate, explicit way back.
+#[derive(Debug)]
+pub enum Answer {
+    Value(String),
+    Back,
+    Cancel,
+}
+
 #[derive(Debug)]
 pub enum Picked {
     Entry(usize),
@@ -411,7 +422,7 @@ impl Ui {
         label: &str,
         options: &[Choice],
         default: Option<&str>,
-    ) -> Result<Option<String>> {
+    ) -> Result<Answer> {
         let matcher = SkimMatcherV2::default().ignore_case();
         let mut input = default.unwrap_or("").to_string();
         let mut cursor = 0usize;
@@ -517,18 +528,19 @@ impl Ui {
             }
             let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
             match k.code {
-                KeyCode::Esc => return Ok(None),
-                KeyCode::Char('c') if ctrl => return Ok(None),
+                KeyCode::Esc => return Ok(Answer::Cancel),
+                KeyCode::Char('c') if ctrl => return Ok(Answer::Cancel),
+                KeyCode::Char('b') if ctrl => return Ok(Answer::Back),
                 KeyCode::Enter => {
                     if custom && cursor == 0 {
-                        return Ok(Some(input));
+                        return Ok(Answer::Value(input));
                     }
                     let idx = cursor - usize::from(custom);
                     if let Some(c) = hits.get(idx) {
-                        return Ok(Some(c.value.clone()));
+                        return Ok(Answer::Value(c.value.clone()));
                     }
                     if !input.is_empty() {
-                        return Ok(Some(input));
+                        return Ok(Answer::Value(input));
                     }
                 }
                 KeyCode::Up => cursor = cursor.saturating_sub(1),
@@ -560,7 +572,7 @@ impl Ui {
         context: &str,
         label: &str,
         default: Option<&str>,
-    ) -> Result<Option<String>> {
+    ) -> Result<Answer> {
         let mut input = default.unwrap_or("").to_string();
         loop {
             self.term.draw(|f| {
@@ -630,9 +642,10 @@ impl Ui {
             }
             let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
             match k.code {
-                KeyCode::Esc => return Ok(None),
-                KeyCode::Char('c') if ctrl => return Ok(None),
-                KeyCode::Enter => return Ok(Some(input)),
+                KeyCode::Esc => return Ok(Answer::Cancel),
+                KeyCode::Char('c') if ctrl => return Ok(Answer::Cancel),
+                KeyCode::Char('b') if ctrl => return Ok(Answer::Back),
+                KeyCode::Enter => return Ok(Answer::Value(input)),
                 KeyCode::Backspace => {
                     input.pop();
                 }
@@ -644,7 +657,7 @@ impl Ui {
     }
 
     /// Second confirmation for a dangerous command.
-    pub fn confirm(&mut self, command: &str) -> Result<bool> {
+    pub fn confirm(&mut self, command: &str) -> Result<Answer> {
         loop {
             self.term.draw(|f| {
                 let area = f.area();
@@ -698,10 +711,16 @@ impl Ui {
                 continue;
             }
             match k.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => return Ok(true),
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => return Ok(false),
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    return Ok(Answer::Value(String::new()))
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => return Ok(Answer::Back),
+                KeyCode::Char('b') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return Ok(Answer::Back)
+                }
+                KeyCode::Esc => return Ok(Answer::Cancel),
                 KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
-                    return Ok(false)
+                    return Ok(Answer::Cancel)
                 }
                 _ => {}
             }

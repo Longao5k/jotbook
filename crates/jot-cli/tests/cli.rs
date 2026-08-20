@@ -1156,3 +1156,132 @@ fn rename_refuses_what_it_does_not_own() {
     assert!(!o.status.success(), "renamed a built-in notebook");
     assert!(stderr(&o).contains("local"), "{}", stderr(&o));
 }
+
+// ─────────────────────── paste import ───────────────────────
+
+fn write_sample(home: &std::path::Path) -> PathBuf {
+    let path = home.join("pasted.txt");
+    std::fs::write(
+        &path,
+        concat!(
+            "1. adb shell cat /proc/meminfo | head -n 5           ---------- Check RAM size
+",
+            "2. adb shell su 0 rm /data/misc/wifi/WifiConfigStore.xml 清除wifi
+",
+            "
+",
+            "3.  // // Remove saved WiFi configurations
+",
+            "4.adb shell screencap -p /sdcard/Resetdialog.png
+",
+            "5. adb shell settings put system user_rotation 0竖屏
+",
+        ),
+    )
+    .unwrap();
+    path
+}
+
+#[test]
+fn pasted_text_is_normalised_without_writing_anything() {
+    let home = temp_home("importtext");
+    let sample = write_sample(&home);
+
+    let o = jot(
+        &home,
+        &[
+            "import",
+            "text",
+            "--dry-run",
+            "--file",
+            sample.to_str().unwrap(),
+        ],
+    );
+    assert!(o.status.success(), "{}", stderr(&o));
+    let out = stdout(&o);
+
+    // List markers and comment markers come off
+    assert!(
+        out.contains("adb shell cat /proc/meminfo | head -n 5"),
+        "{out}"
+    );
+    assert!(
+        out.contains("adb shell screencap -p /sdcard/Resetdialog.png"),
+        "{out}"
+    );
+    // A note attached by a dash run, and one with no separator at all
+    assert!(out.contains("Check RAM size"), "{out}");
+    assert!(
+        out.contains("adb shell settings put system user_rotation 0"),
+        "{out}"
+    );
+    // A sentence is not a command
+    assert!(
+        !out.contains("Remove saved"),
+        "a sentence was imported:
+{out}"
+    );
+    // --dry-run means exactly that
+    assert!(
+        !home.join("notebooks").join("local").join("my.md").exists(),
+        "--dry-run wrote a notebook"
+    );
+}
+
+#[test]
+fn import_text_reports_when_there_is_nothing_to_import() {
+    let home = temp_home("importempty");
+    let path = home.join("prose.txt");
+    std::fs::write(
+        &path,
+        "Just some notes I wrote down.
+Nothing runnable here.
+",
+    )
+    .unwrap();
+
+    let o = jot(
+        &home,
+        &[
+            "import",
+            "text",
+            "--dry-run",
+            "--file",
+            path.to_str().unwrap(),
+        ],
+    );
+    assert!(!o.status.success(), "claimed to find commands in prose");
+    assert!(stderr(&o).contains("command"), "{}", stderr(&o));
+}
+
+/// Imports must be able to land in a notebook of the user's choosing, not
+/// only in my.md.
+#[test]
+fn import_targets_a_named_notebook() {
+    let home = temp_home("importtarget");
+    let sample = write_sample(&home);
+    jot(&home, &["new", "android"]);
+
+    // Non-interactive path: -n settles it without a prompt
+    let o = jot(
+        &home,
+        &[
+            "import",
+            "text",
+            "-n",
+            "android",
+            "--dry-run",
+            "--file",
+            sample.to_str().unwrap(),
+        ],
+    );
+    assert!(o.status.success(), "{}", stderr(&o));
+
+    // And the option exists on the history importer too
+    let help = stdout(&jot(&home, &["import", "history", "--help"]));
+    assert!(
+        help.contains("--notebook"),
+        "history import cannot target a notebook:
+{help}"
+    );
+}

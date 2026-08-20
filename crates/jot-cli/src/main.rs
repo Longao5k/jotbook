@@ -20,7 +20,7 @@ use jot_core::{Config, Library, Paths, Profiles, Usage};
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
-use tui::{Picked, Ui};
+use tui::{Answer, Picked, Ui};
 
 /// Exit code for a user cancel; the shell widget reads it as "leave the line alone".
 const EXIT_CANCEL: i32 = 130;
@@ -186,6 +186,9 @@ enum ImportCmd {
     History {
         #[arg(long, default_value_t = 60)]
         top: usize,
+        /// Which personal notebook to save into; asked for if omitted
+        #[arg(long, short)]
+        notebook: Option<String>,
     },
     /// Import pasted commands - from the clipboard by default
     Text {
@@ -299,7 +302,7 @@ fn run() -> Result<i32> {
         Some(Cmd::Use { profile }) => cmd_use(&profile),
         Some(Cmd::Profile { action }) => cmd_profile(action),
         Some(Cmd::Import { what }) => match what {
-            ImportCmd::History { top } => cmd_import_history(top),
+            ImportCmd::History { top, notebook } => cmd_import_history(top, notebook.as_deref()),
             ImportCmd::Text {
                 file,
                 notebook,
@@ -410,7 +413,7 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
             );
             let context = vars::render(&entry.command, &values);
             let (got, was_asked) = match plan {
-                Ask::Resolved(v) => (Some(v), false),
+                Ask::Resolved(v) => (Answer::Value(v), false),
                 Ask::Choose {
                     label,
                     options,
@@ -424,14 +427,18 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
                 }
             };
             match got {
-                Some(v) => {
+                Answer::Value(v) => {
                     values.insert(r.name.clone(), v);
                     if was_asked {
                         asked.push(i);
                     }
                     i += 1;
                 }
-                None => match asked.pop() {
+                Answer::Cancel => {
+                    drop(ui);
+                    return Ok(EXIT_CANCEL);
+                }
+                Answer::Back => match asked.pop() {
                     // Back to the previous question, dropping only its answer
                     Some(prev) => {
                         values.remove(&refs[prev].name);
@@ -444,9 +451,16 @@ fn cmd_pick(query: &str, widget: bool, line: &str, first: bool) -> Result<i32> {
         }
 
         let final_cmd = vars::render(&entry.command, &values);
-        if entry.confirm && !ui.confirm(&final_cmd)? {
-            // Declining the confirmation returns you to the list, not the shell
-            continue 'pick;
+        if entry.confirm {
+            match ui.confirm(&final_cmd)? {
+                Answer::Value(_) => {}
+                // n returns you to the list, which is where you wanted to be
+                Answer::Back => continue 'pick,
+                Answer::Cancel => {
+                    drop(ui);
+                    return Ok(EXIT_CANCEL);
+                }
+            }
         }
         break (entry, final_cmd);
     };
@@ -643,22 +657,27 @@ fn cmd_save(args: SaveArgs) -> Result<i32> {
         Some(t) if !t.trim().is_empty() => (t, desc.unwrap_or_default()),
         _ => {
             let mut ui = Ui::new()?;
-            let asked = ui.ask_text(
+            let Answer::Value(t) = ui.ask_text(
                 &parameterized,
                 t!("标题", "Title").as_ref(),
                 Some(&capture::guess_title(&raw)),
-            )?;
-            let Some(t) = asked.filter(|t| !t.trim().is_empty()) else {
+            )?
+            else {
                 drop(ui);
                 return Ok(EXIT_CANCEL);
             };
-            let d = ui
-                .ask_text(
-                    &parameterized,
-                    t!("说明（可留空）", "Description (optional)").as_ref(),
-                    Some(""),
-                )?
-                .unwrap_or_default();
+            if t.trim().is_empty() {
+                drop(ui);
+                return Ok(EXIT_CANCEL);
+            }
+            let d = match ui.ask_text(
+                &parameterized,
+                t!("说明（可留空）", "Description (optional)").as_ref(),
+                Some(""),
+            )? {
+                Answer::Value(d) => d,
+                _ => String::new(),
+            };
             drop(ui);
             (t, d)
         }
@@ -709,9 +728,54 @@ fn cmd_save(args: SaveArgs) -> Result<i32> {
     Ok(0)
 }
 
+/// Ask which notebook to write into.
+///
+/// Lists the ones you already have, and typing a name that does not exist
+/// creates it - so starting a new notebook never needs a separate step.
+/// Returns None when the user backed out.
+fn ask_notebook(ui: &mut Ui, paths: &Paths, context: &str) -> Result<Option<String>> {
+    use jot_core::resolve::Choice;
+
+    let mut names: Vec<String> = std::fs::read_dir(paths.local_dir())
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "md").unwrap_or(false))
+        .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
+        .collect();
+    names.sort();
+    if !names.iter().any(|n| n == "my") {
+        names.push("my".to_string());
+    }
+
+    let options: Vec<Choice> = names
+        .iter()
+        .map(|n| Choice {
+            value: n.clone(),
+            display: n.clone(),
+        })
+        .collect();
+
+    let answer = ui.ask_choice(
+        context,
+        t!(
+            "存到哪个笔记本（可直接打新名字）",
+            "Which notebook (type a new name to create one)"
+        )
+        .as_ref(),
+        &options,
+        None,
+    )?;
+    Ok(match answer {
+        Answer::Value(v) if !v.trim().is_empty() => Some(v.trim().to_string()),
+        _ => None,
+    })
+}
+
 // ─────────────────────────── import ───────────────────────────
 
-fn cmd_import_history(top: usize) -> Result<i32> {
+fn cmd_import_history(top: usize, notebook: Option<&str>) -> Result<i32> {
     let paths = Paths::discover()?;
     let cfg = Config::load(&paths);
     let profiles = Profiles::load(&paths);
@@ -740,6 +804,14 @@ fn cmd_import_history(top: usize) -> Result<i32> {
         .collect();
 
     let mut ui = Ui::new()?;
+    let target = match notebook {
+        Some(n) => Some(n.to_string()),
+        None => ask_notebook(&mut ui, &paths, &format!("{} 条", items.len()))?,
+    };
+    let Some(target) = target else {
+        drop(ui);
+        return Ok(EXIT_CANCEL);
+    };
     let picked = ui.multi_select(
         t!(
             "从 shell 历史导入（按使用频次排序）",
@@ -764,7 +836,7 @@ fn cmd_import_history(top: usize) -> Result<i32> {
         let (parameterized, _) = capture::parameterize(raw, &profiles, cfg.profile_name());
         capture::append(
             &paths,
-            None,
+            Some(&target),
             &capture::guess_title(raw),
             "",
             capture::guess_lang(raw),
@@ -878,6 +950,14 @@ fn cmd_import_text(file: Option<&str>, notebook: Option<&str>, dry_run: bool) ->
     }
 
     let mut ui = Ui::new()?;
+    let target = match notebook {
+        Some(n) => Some(n.to_string()),
+        None => ask_notebook(&mut ui, &paths, &format!("{} × {}", source, drafts.len()))?,
+    };
+    let Some(target) = target else {
+        drop(ui);
+        return Ok(EXIT_CANCEL);
+    };
     let picked = ui.multi_select(
         t!(
             "从{}导入（已归一化，空格勾选）",
@@ -911,7 +991,7 @@ fn cmd_import_text(file: Option<&str>, notebook: Option<&str>, dry_run: bool) ->
         };
         path = capture::append(
             &paths,
-            notebook,
+            Some(&target),
             &title,
             "",
             capture::guess_lang(&d.command),
@@ -933,7 +1013,7 @@ fn cmd_import_text(file: Option<&str>, notebook: Option<&str>, dry_run: bool) ->
         t!(
             "jot: 标题用的是你写的注释；要改就 `jot edit {}`",
             "jot: titles came from your own notes; run `jot edit {}` to adjust",
-            notebook.unwrap_or("my")
+            target
         )
     );
     Ok(0)

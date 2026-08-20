@@ -107,6 +107,7 @@ jot                                                      # 开始用
 | `jot save "<命令>"` | 存一条指定的命令 |
 | `jot import history` | 从 shell 历史批量导入，按频次排序 |
 | `jot import text` | 粘贴批量导入 —— 默认读剪贴板 |
+| `jot import text -n <名字>` | 导入到指定笔记本 |
 | `jot ls` | 列出全部条目 |
 | `jot notebooks` | 列出所有笔记本，以及在选择器里用的 `@名字` |
 | `jot edit [笔记本]` | 用 `$EDITOR` 打开 |

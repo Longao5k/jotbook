@@ -107,6 +107,7 @@ jot                                                      # go
 | `jot save "<command>"` | Save a specific command |
 | `jot import history` | Bulk import from shell history, ranked by frequency |
 | `jot import text` | Import commands pasted from anywhere - the clipboard by default |
+| `jot import text -n <name>` | ...into a notebook of your choosing |
 | `jot ls` | List every entry |
 | `jot notebooks` | List the notebooks and the `@name` to filter by |
 | `jot edit [notebook]` | Open in `$EDITOR` |

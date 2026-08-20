@@ -3,6 +3,7 @@ resolver = "2"
 members = ["crates/jot-core", "crates/jot-cli"]
 
 [workspace.package]
+authors = ["TerryLI"]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"

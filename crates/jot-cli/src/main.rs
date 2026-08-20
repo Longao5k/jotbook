@@ -47,6 +47,8 @@ const SUBCOMMANDS: &[&str] = &[
     "untrust",
     "lang",
     "notebooks",
+    "notebook",
+    "rename",
 ];
 
 #[derive(Parser)]
@@ -149,7 +151,14 @@ enum Cmd {
     /// Withdraw trust
     Untrust { name: String },
     /// List the notebooks, with the @name to filter by in the picker
-    Notebooks,
+    #[command(alias = "notebook")]
+    Notebooks {
+        /// Just the names, one per line, for scripts and variable sources
+        #[arg(long)]
+        names: bool,
+    },
+    /// Rename one of your own notebooks
+    Rename { from: String, to: String },
     /// Show or set the interface language
     Lang {
         /// en | zh | auto
@@ -286,7 +295,8 @@ fn run() -> Result<i32> {
         Some(Cmd::Remove { name }) => cmd_remove(&name),
         Some(Cmd::Trust { name }) => cmd_trust(&name, true),
         Some(Cmd::Untrust { name }) => cmd_trust(&name, false),
-        Some(Cmd::Notebooks) => cmd_notebooks(),
+        Some(Cmd::Notebooks { names }) => cmd_notebooks(names),
+        Some(Cmd::Rename { from, to }) => cmd_rename(&from, &to),
         Some(Cmd::Lang { value }) => cmd_lang(value.as_deref()),
         Some(Cmd::Doctor) => cmd_doctor(),
         Some(Cmd::Path) => cmd_path(),
@@ -749,7 +759,10 @@ fn cmd_ls(notebook: Option<&str>) -> Result<i32> {
             }
         }
         let visible: Vec<&Entry> = nb.entries.iter().filter(|e| e.visible_on(plat)).collect();
-        if visible.is_empty() {
+        let hidden = nb.entries.len() - visible.len();
+        // Say nothing about a notebook that is entirely irrelevant here, but
+        // never stay silent about one the user asked for by name
+        if visible.is_empty() && notebook.is_none() {
             continue;
         }
         println!(
@@ -764,6 +777,19 @@ fn cmd_ls(notebook: Option<&str>) -> Result<i32> {
         );
         for e in visible {
             println!("  {:<40} {}", e.title, vars::preview(&e.command));
+        }
+        // Without this, saving a linux command on Windows looks like it
+        // vanished: the entry is there, just filtered out by @platform.
+        if hidden > 0 {
+            println!(
+                "{}",
+                t!(
+                    "  （另有 {} 条被 @platform 隐藏，当前平台是 {}）",
+                    "  ({} more hidden by @platform; this platform is {})",
+                    hidden,
+                    plat
+                )
+            );
         }
     }
     Ok(0)
@@ -1101,10 +1127,73 @@ fn cmd_trust(name: &str, on: bool) -> Result<i32> {
     Ok(0)
 }
 
-fn cmd_notebooks() -> Result<i32> {
+fn cmd_rename(from: &str, to: &str) -> Result<i32> {
+    let paths = Paths::discover()?;
+    let src = paths.local_dir().join(format!("{from}.md"));
+    let dst = paths.local_dir().join(format!("{to}.md"));
+
+    if !src.is_file() {
+        bail!(
+            "{}",
+            t!(
+                "«{from}» 不是你自己的笔记本。只有 local/ 下面的能改名，内置和社区源不行",
+                "«{from}» is not one of your own notebooks. Only those under local/ can be renamed"
+            )
+        );
+    }
+    if dst.exists() {
+        bail!(
+            "{}",
+            t!("{} 已经存在了", "{} already exists", dst.display())
+        );
+    }
+
+    // The frontmatter name is what the picker and @filters use, so it has to
+    // move with the file or the two would disagree.
+    let text = std::fs::read_to_string(&src)?;
+    let renamed = text
+        .lines()
+        .map(|l| {
+            if l.trim_start().starts_with("name:") && l.trim() == format!("name: {from}") {
+                format!("name: {to}")
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
+    std::fs::write(
+        &dst,
+        renamed
+            + "
+",
+    )?;
+    std::fs::remove_file(&src)?;
+
+    eprintln!(
+        "{}",
+        t!("jot: «{from}» → «{to}»", "jot: «{from}» -> «{to}»")
+    );
+    Ok(0)
+}
+
+fn cmd_notebooks(names_only: bool) -> Result<i32> {
     let paths = Paths::discover()?;
     let lib = Library::load(&paths)?;
     let plat = jot_core::notebook::current_platform();
+
+    if names_only {
+        let mut names: Vec<&str> = lib.notebooks.iter().map(|n| n.name.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        for name in names {
+            println!("{name}");
+        }
+        return Ok(0);
+    }
 
     println!(
         "{}",

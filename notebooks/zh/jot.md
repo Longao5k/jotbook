@@ -2,6 +2,11 @@
 name: jot
 description: Jotbook 自己 —— 怎么记、怎么找、怎么写笔记本
 tags: [meta]
+vars:
+  notebook:
+    desc: 笔记本
+    from: shell
+    cmd: jot notebooks --names
 ---
 
 ## 打开选择器

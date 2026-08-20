@@ -190,9 +190,14 @@ fn platform_filtering_hides_other_platforms() {
     let powershell = stdout(&jot(&home, &["ls", "--notebook", "powershell"]));
 
     if cfg!(target_os = "windows") {
+        // Asked for by name, so it reports itself - but lists no entries
         assert!(
-            systemd.trim().is_empty(),
-            "systemd entries must not show on Windows"
+            !systemd.contains("Restart a service"),
+            "a systemd entry was listed on Windows:\n{systemd}"
+        );
+        assert!(
+            systemd.contains("hidden by @platform"),
+            "did not explain why systemd is empty:\n{systemd}"
         );
         assert!(
             powershell.contains("#"),
@@ -200,8 +205,22 @@ fn platform_filtering_hides_other_platforms() {
         );
     } else {
         assert!(
-            powershell.trim().is_empty(),
-            "powershell entries must not show off Windows"
+            !powershell.contains("Find what is using a port"),
+            "a powershell entry was listed off Windows:\n{powershell}"
+        );
+    }
+
+    // Neither should turn up in an unfiltered listing on the wrong platform
+    let all = stdout(&jot(&home, &["ls"]));
+    if cfg!(target_os = "windows") {
+        assert!(
+            !all.contains("# systemd"),
+            "systemd appeared in a full listing"
+        );
+    } else {
+        assert!(
+            !all.contains("# powershell"),
+            "powershell appeared in a full listing"
         );
     }
 }
@@ -1011,4 +1030,104 @@ fn platform_settles_the_fence_language() {
         "a linux command was not labelled sh:\n{md}"
     );
     assert!(!md.contains("```ps1 @platform=linux"), "{md}");
+}
+
+/// Saving a linux command on Windows must not look like it vanished: the
+/// entry is there, @platform just hides it.
+#[test]
+fn ls_reports_entries_hidden_by_platform() {
+    let home = temp_home("lshidden");
+    let dir = home.join("notebooks").join("local");
+    std::fs::create_dir_all(&dir).unwrap();
+    let other = if cfg!(target_os = "windows") {
+        "linux"
+    } else {
+        "windows"
+    };
+    std::fs::write(
+        dir.join("mixed.md"),
+        format!(
+            "---\nname: mixed\n---\n\n## Visible one\n\n```sh\necho here\n```\n\n\
+## Hidden one\n\n```sh @platform={other}\necho elsewhere\n```\n"
+        ),
+    )
+    .unwrap();
+
+    let o = stdout(&jot(&home, &["ls", "--notebook", "mixed"]));
+    assert!(o.contains("Visible one"), "{o}");
+    assert!(
+        o.contains("1 more hidden by @platform"),
+        "did not say an entry was hidden:\n{o}"
+    );
+}
+
+/// Asking for a notebook by name must never print nothing, even when every
+/// entry in it is hidden here.
+#[test]
+fn ls_of_an_all_hidden_notebook_still_says_something() {
+    let home = temp_home("lsallhidden");
+    let o = stdout(&jot(&home, &["ls", "--notebook", "systemd"]));
+    if cfg!(target_os = "windows") {
+        assert!(o.contains("# systemd"), "printed nothing at all:\n{o}");
+        assert!(o.contains("hidden by @platform"), "{o}");
+    }
+}
+
+#[test]
+fn notebooks_names_is_a_plain_list() {
+    let home = temp_home("nbnames");
+    let o = stdout(&jot(&home, &["notebooks", "--names"]));
+    let lines: Vec<&str> = o.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(lines.contains(&"git"), "{o}");
+    assert!(lines.contains(&"docker"), "{o}");
+    // Plain enough to drive a variable's candidate list
+    for l in &lines {
+        assert!(!l.contains(' '), "not a bare name: {l:?}");
+        assert!(!l.starts_with('@'), "decorated: {l:?}");
+    }
+}
+
+#[test]
+fn notebook_singular_is_the_same_command() {
+    let home = temp_home("nbalias");
+    let plural = stdout(&jot(&home, &["notebooks", "--names"]));
+    let singular = stdout(&jot(&home, &["notebook", "--names"]));
+    assert_eq!(plural, singular, "the singular alias behaves differently");
+}
+
+#[test]
+fn rename_moves_the_file_and_the_frontmatter_name() {
+    let home = temp_home("rename");
+    jot(&home, &["new", "oldname"]);
+    jot(
+        &home,
+        &["save", "-n", "oldname", "-t", "Zzkeep me", "echo kept"],
+    );
+
+    let o = jot(&home, &["rename", "oldname", "newname"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+
+    let local = home.join("notebooks").join("local");
+    assert!(!local.join("oldname.md").exists(), "the old file survived");
+    let md = std::fs::read_to_string(local.join("newname.md")).unwrap();
+    assert!(
+        md.contains("name: newname"),
+        "frontmatter not renamed:\n{md}"
+    );
+    assert!(md.contains("Zzkeep me"), "entries were lost:\n{md}");
+
+    // The picker and @filters key off the frontmatter name, so it has to agree
+    let names = stdout(&jot(&home, &["notebooks", "--names"]));
+    assert!(names.lines().any(|l| l == "newname"), "{names}");
+    assert!(!names.lines().any(|l| l == "oldname"), "{names}");
+}
+
+#[test]
+fn rename_refuses_what_it_does_not_own() {
+    let home = temp_home("renameguard");
+    jot(&home, &["doctor"]);
+    // Built-in notebooks are rewritten on upgrade, so renaming one is a trap
+    let o = jot(&home, &["rename", "git", "mygit"]);
+    assert!(!o.status.success(), "renamed a built-in notebook");
+    assert!(stderr(&o).contains("local"), "{}", stderr(&o));
 }

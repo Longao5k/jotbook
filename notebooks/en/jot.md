@@ -2,6 +2,11 @@
 name: jot
 description: Jotbook itself - how to save, find and write notebooks
 tags: [meta]
+vars:
+  notebook:
+    desc: notebook
+    from: shell
+    cmd: jot notebooks --names
 ---
 
 ## Open the picker

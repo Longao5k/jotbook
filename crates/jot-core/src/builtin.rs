@@ -12,7 +12,7 @@ use anyhow::Result;
 
 /// Bump this whenever built-in notebook content changes, or existing
 /// installs will never see the new content.
-pub const BUILTIN_VERSION: &str = "0.3.0";
+pub const BUILTIN_VERSION: &str = "0.4.0";
 
 /// Adding a notebook is one line per language.
 macro_rules! notebooks {
